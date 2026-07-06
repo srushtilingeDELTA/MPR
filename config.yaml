@@ -1,0 +1,27 @@
+﻿excel:
+  file_path: "data/MPR Actuals and Goals_v2.xlsx"
+  sheet_name: "May Actuals"
+  header_row: 0
+
+columns:
+  kpi: "KPI"
+  year: "Yr_Nb"
+  month: "Mo_Nb"
+  quarter: "Qtr_Nb"
+  entity: "Entity"
+  num: "Num"
+  den: "Den"
+  actual: "Actual"
+  region: "REGION"
+  status: "KPI Update Status"
+
+report:
+  use_previous_month: false
+  year: 2026
+  month: 5
+
+powerpoint:
+  template_path: "templates/GSE MPR - Template.pptx"
+  output_dir: "output"
+  output_name: "GSE_MPR_Report_{year}_{month:02d}.pptx"
+  
