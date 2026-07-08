@@ -24,4 +24,28 @@ powerpoint:
   template_path: "templates/GSE MPR - Template.pptx"
   output_dir: "output"
   output_name: "GSE_MPR_Report_{year}_{month:02d}.pptx"
-  
+
+slides:
+  gir: 4
+  people: 6
+  pmi: 10
+  isr: 11
+  operations: 19
+  vos: 21
+
+kpi_mappings:
+  gir: "GIR"
+  injury_count: "Injury Count"
+  pm_motorized: "PM (M)"
+  pm_stationary: "PM (S)"
+  pm_nme: "PM (NME)"
+  isr_reliability: "REL"
+  isr_severity: "SEV"
+  jam_rate: "Jams"
+  clear_times: "Times"
+  vos: "VOS (S)"
+  budget: "Budget"
+  ot: "OT"
+  hours: "Hours"
+  asap: "ASAP"
+  eac: "EAC"
