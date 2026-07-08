@@ -1,0 +1,242 @@
+# Template element map for GSE MPR - Template.pptx
+# Run: python scripts/dump_template_inventory.py  (after syncing template locally)
+# to refresh slide indices and shape details from the live SharePoint template.
+#
+# Rules:
+# - Data comes from workbooks: actuals | workings | scorecards
+# - If data is unavailable, content areas are cleared (title/subtitle kept)
+# - No placeholder text is written
+
+slides:
+  - index: 0
+    name: cover
+    keep_title: true
+    elements:
+      - type: month_tokens
+
+  - index: 1
+    name: agenda
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 2
+    name: scorecard_summary_1
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 0
+        optional: true
+
+  - index: 3
+    name: scorecard_summary_2
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 1
+        optional: true
+
+  - index: 4
+    name: gir
+    keep_title: true
+    elements:
+      - type: gir_tables
+        workbook: actuals
+        kpis:
+          gir: GIR
+          injury_count: "Injury Count"
+      - type: gir_charts
+        workbook: actuals
+        kpi: GIR
+
+  - index: 5
+    name: safety_other
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 6
+    name: people
+    keep_title: true
+    elements:
+      - type: people_table
+        workbook: actuals
+        rows:
+          - label: "LEADERSHIP ENGAGEMENT"
+            patterns: ["Leadership Engagement", "LEADERSHIP ENGAGEMENT"]
+          - label: "PSYCHOLOGICAL SAFETY"
+            patterns: ["Psychological Safety", "PSYCHOLOGICAL SAFETY"]
+          - label: "ACCOUNTABILITY"
+            patterns: ["Accountability", "ACCOUNTABILITY"]
+      - type: people_charts
+        workbook: actuals
+        charts:
+          - title: "Leadership Engagement"
+            patterns: ["Leadership Engagement", "LEADERSHIP ENGAGEMENT"]
+          - title: "Psychological Safety"
+            patterns: ["Psychological Safety", "PSYCHOLOGICAL SAFETY"]
+          - title: "Accountability"
+            patterns: ["Accountability", "ACCOUNTABILITY"]
+
+  - index: 7
+    name: people_other
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 8
+    name: pmi_intro
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 9
+    name: pmi_summary
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 10
+    name: pmi
+    keep_title: true
+    elements:
+      - type: chart_slide
+        workbook: actuals
+        charts:
+          - title: Motorized
+            patterns: ["PM (M)"]
+          - title: Stationary
+            patterns: ["PM (S)"]
+
+  - index: 11
+    name: isr
+    keep_title: true
+    elements:
+      - type: chart_slide
+        workbook: actuals
+        charts:
+          - title: Reliability
+            patterns: ["REL"]
+          - title: Severity
+            patterns: ["SEV"]
+
+  - index: 12
+    name: isr_other
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 13
+    name: entity_scorecard_1
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 2
+        optional: true
+
+  - index: 14
+    name: entity_scorecard_2
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 3
+        optional: true
+
+  - index: 15
+    name: entity_scorecard_3
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 4
+        optional: true
+
+  - index: 16
+    name: entity_scorecard_4
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 5
+        optional: true
+
+  - index: 17
+    name: entity_scorecard_5
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 6
+        optional: true
+
+  - index: 18
+    name: entity_scorecard_6
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 7
+        optional: true
+
+  - index: 19
+    name: operations
+    keep_title: true
+    elements:
+      - type: chart_slide
+        workbook: actuals
+        charts:
+          - title: "Jam Rate"
+            patterns: ["Jams"]
+          - title: "Clear Times"
+            patterns: ["Times"]
+
+  - index: 20
+    name: operations_other
+    keep_title: true
+    clear_non_titles: true
+
+  - index: 21
+    name: vos
+    keep_title: true
+    elements:
+      - type: chart_slide
+        workbook: actuals
+        charts:
+          - title: ""
+            patterns: ["VOS (S)"]
+
+  - index: 22
+    name: financials
+    keep_title: true
+    clear_non_titles: true
+    elements:
+      - type: workings_table
+        workbook: workings
+        sheet: null
+        optional: true
+
+  - index: 23
+    name: appendix_1
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 8
+        optional: true
+
+  - index: 24
+    name: appendix_2
+    keep_title: true
+    clear_pictures: true
+    elements:
+      - type: scorecard_sheet
+        workbook: scorecards
+        sheet_index: 9
+        optional: true

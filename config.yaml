@@ -2,6 +2,47 @@
   file_path: "data/MPR Actuals and Goals_v2.xlsx"
   sheet_name: "May Actuals"
   header_row: 0
+  source: "sharepoint"
+
+workbooks:
+  actuals:
+    path: "data/MPR Actuals and Goals_v2.xlsx"
+    header_row: 0
+  workings:
+    path: "data/New GSE MPR Workings.xlsx"
+    header_row: 0
+    optional: true
+  scorecards:
+    path: "data/2026 - GSE Scorecards.xlsx"
+    header_row: 0
+    optional: true
+
+sharepoint:
+  site_url: "https://deltaairlines.sharepoint.com/sites/DL002488"
+  library: "GSE MPR Documents"
+  folder: "6 - TESTING"
+  server_folder_path: "/sites/DL002488/MPR  Research/GSE MPR Documents/6 - TESTING"
+  folder_page_url: "https://deltaairlines.sharepoint.com/sites/DL002488/SitePages/Home.aspx?RootFolder=%2Fsites%2FDL002488%2FMPR%20%20Research%2FGSE%20MPR%20Documents%2F6%20%2D%20TESTING&FolderCTID=0x0120002CC7103732886141A53F050CFF5FF8E0&View=%7BB871FEB2%2DD865%2D4C61%2DB460%2D3E2437A9F7E3%7D"
+  live_read: true
+  upload_report: true
+  upload_method: "auto"   # auto | rest | selenium
+  upload_login_wait_seconds: 60
+  upload_complete_wait_seconds: 90
+  cache_to_disk: false
+  browser: "edge"
+  edge_path: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+  login_wait_seconds: 180
+  files:
+    - name: "MPR Actuals and Goals_v2.xlsx"
+      dest: "data/MPR Actuals and Goals_v2.xlsx"
+    - name: "GSE MPR - Template.pptx"
+      dest: "templates/GSE MPR - Template.pptx"
+    - name: "2026 - GSE Scorecards.xlsx"
+      dest: "data/2026 - GSE Scorecards.xlsx"
+      optional: true
+    - name: "New GSE MPR Workings.xlsx"
+      dest: "data/New GSE MPR Workings.xlsx"
+      optional: true
 
 columns:
   kpi: "KPI"
@@ -22,8 +63,10 @@ report:
 
 powerpoint:
   template_path: "templates/GSE MPR - Template.pptx"
+  template_map: "template_map.yaml"
   output_dir: "output"
-  output_name: "GSE_MPR_Report_{year}_{month:02d}.pptx"
+  output_name: "GSE MPR - {month_name} {year}.pptx"
+  clear_unmapped_slides: false
 
 slides:
   gir: 4
