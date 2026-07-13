@@ -84,6 +84,113 @@ def _build_requests_session(driver) -> requests.Session:
     return session
 
 
+def _folder_view_ready(driver, sp_cfg: dict) -> bool:
+    """True when SharePoint folder UI (or API cookies) look ready — not a login page."""
+    try:
+        url = (driver.current_url or "").lower()
+    except Exception:
+        return False
+
+    # Still on Microsoft login / MFA interstitial.
+    login_markers = (
+        "login.microsoftonline.com",
+        "login.microsoft.com",
+        "device.login.microsoftonline.com",
+        "/common/oauth2",
+        "msaauth",
+    )
+    if any(marker in url for marker in login_markers):
+        return False
+
+    try:
+        source = (driver.page_source or "").lower()
+    except Exception:
+        source = ""
+
+    if any(token in source for token in ("sign in to your account", "enter password", "verify your identity")):
+        # SharePoint shell sometimes embeds these strings; require login host too.
+        if "microsoftonline" in url or "login.microsoft" in url:
+            return False
+
+    folder_name = str(sp_cfg.get("folder", "6 - TESTING")).casefold()
+    expected_files = [
+        str(entry.get("name", "") if isinstance(entry, dict) else entry).casefold()
+        for entry in (sp_cfg.get("files") or [])
+    ]
+    expected_files = [name for name in expected_files if name]
+
+    page_blob = f"{url}\n{source}"
+    if folder_name and folder_name in page_blob:
+        return True
+    if "sharepoint.com" in url and any(name and name in source for name in expected_files):
+        return True
+    # Generic SharePoint document library chrome once authenticated.
+    if "sharepoint.com" in url and any(
+        token in source
+        for token in (
+            "data-automationid",
+            "commandbar",
+            "detailsList",
+            "odsp-",
+            "sp-appbar",
+        )
+    ):
+        return True
+    return False
+
+
+def _wait_for_sharepoint_folder(driver, sp_cfg: dict, *, max_wait_seconds: int) -> float:
+    """
+    Poll until the folder view is open (or cookies are usable).
+
+    Returns elapsed seconds. Uses max_wait_seconds only as a ceiling — returns
+    early as soon as the folder view is ready.
+    """
+    max_wait = max(5, int(max_wait_seconds))
+    poll = float(sp_cfg.get("login_poll_seconds", 1.5))
+    started = time.time()
+    last_note = 0.0
+
+    # Fast path: folder already open (SSO session) — do not burn the full timeout.
+    if _folder_view_ready(driver, sp_cfg):
+        time.sleep(1.0)
+        elapsed = time.time() - started
+        logger.info("SharePoint folder view already open (%.1fs)", elapsed)
+        print(">>> Folder view already open — continuing (no full login wait).\n")
+        return elapsed
+
+    print(
+        "\n>>> Sign in to Delta / SharePoint if prompted.\n"
+        f">>> Waiting for the folder view (up to {max_wait}s; continues as soon as it opens)...\n"
+    )
+
+    while True:
+        elapsed = time.time() - started
+        if _folder_view_ready(driver, sp_cfg):
+            # Tiny settle so cookies finish writing after the UI appears.
+            time.sleep(1.0)
+            total = time.time() - started
+            logger.info("SharePoint folder view ready after %.1fs", total)
+            print(f">>> Folder view ready after {total:.0f}s — continuing.\n")
+            return total
+
+        if elapsed >= max_wait:
+            logger.warning(
+                "SharePoint folder view not confirmed after %ss; continuing anyway",
+                max_wait,
+            )
+            print(
+                f">>> Reached {max_wait}s without a clear folder view — continuing anyway.\n"
+                ">>> If downloads fail, sign in fully and re-run.\n"
+            )
+            return elapsed
+
+        if elapsed - last_note >= 15:
+            print(f">>> Still waiting for folder view... ({elapsed:.0f}s / {max_wait}s)")
+            last_note = elapsed
+        time.sleep(poll)
+
+
 def begin_sharepoint_browser(config: dict) -> requests.Session:
     """Open Edge/Chrome once for this run; reuse for sync + upload. Call end_sharepoint_browser() when done."""
     existing = config.get("_sharepoint_session")
@@ -110,11 +217,9 @@ def begin_sharepoint_browser(config: dict) -> requests.Session:
     logger.info("Opening SharePoint (%s) — one browser window for this run", browser_label)
     driver.get(folder_page_url)
     print(
-        f"\n>>> {browser_label}: sign in to Delta / SharePoint if prompted.\n"
-        f">>> Waiting {login_wait}s so the folder view loads.\n"
-        f">>> This same window will be reused for upload (no extra tabs).\n"
+        f"\n>>> {browser_label}: browser opened for SharePoint sync + upload (same window).\n"
     )
-    time.sleep(login_wait)
+    _wait_for_sharepoint_folder(driver, sp_cfg, max_wait_seconds=login_wait)
 
     session = _build_requests_session(driver)
     config["_sharepoint_session"] = session
@@ -138,21 +243,21 @@ def browser_session_from_sharepoint(
     browser: str = "edge",
     browser_path: str | None = None,
     login_wait_seconds: int = 180,
+    sp_cfg: dict | None = None,
 ) -> requests.Session:
     """One-shot auth: open browser, return session, close browser (standalone scripts only)."""
     from sharepoint_selenium import _create_driver
 
     driver = _create_driver(browser, Path.cwd(), browser_path, headless=False)
     browser_label = "Edge" if browser.lower() == "edge" else "Chrome"
+    cfg = dict(sp_cfg or {})
+    cfg.setdefault("folder_page_url", folder_page_url)
 
     try:
         logger.info("Opening SharePoint for live read (%s)", browser_label)
         driver.get(folder_page_url)
-        print(
-            f"\n>>> {browser_label}: sign in to Delta / SharePoint if prompted.\n"
-            f">>> Waiting {login_wait_seconds}s so the folder view loads.\n"
-        )
-        time.sleep(login_wait_seconds)
+        print(f"\n>>> {browser_label}: browser opened for SharePoint.\n")
+        _wait_for_sharepoint_folder(driver, cfg, max_wait_seconds=login_wait_seconds)
         return _build_requests_session(driver)
     finally:
         driver.quit()
@@ -309,6 +414,7 @@ def _authenticate(config: dict) -> tuple[requests.Session, dict]:
         browser=browser,
         browser_path=_browser_path(sp_cfg, browser),
         login_wait_seconds=login_wait,
+        sp_cfg=sp_cfg,
     )
     config["_sharepoint_session"] = session
     return session, sp_cfg

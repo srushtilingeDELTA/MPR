@@ -190,10 +190,18 @@ def download_via_selenium(
         print(
             f"\n>>> {browser_label} opened SharePoint.\n"
             f">>> Log in with Delta SSO + MFA if prompted.\n"
-            f">>> You have {login_wait_seconds} seconds — open the Excel file if needed.\n"
             f">>> Looking for: {file_name}\n"
         )
-        time.sleep(login_wait_seconds)
+        from sharepoint_live import _wait_for_sharepoint_folder
+
+        sp_cfg = {
+            "folder": folder,
+            "files": [{"name": file_name}],
+            "login_poll_seconds": 1.5,
+        }
+        _wait_for_sharepoint_folder(
+            driver, sp_cfg, max_wait_seconds=int(login_wait_seconds)
+        )
 
         wait = WebDriverWait(driver, 30)
         file_stem = Path(file_name).stem
@@ -304,11 +312,9 @@ def upload_file_via_selenium(config: dict, local_path: Path, driver=None) -> Non
         if own_driver:
             logger.info("Opening SharePoint folder for upload (%s)", browser_label)
             driver.get(folder_page_url)
-            print(
-                f"\n>>> {browser_label}: confirm the 6 - TESTING folder is open.\n"
-                f">>> Waiting {login_wait}s before upload...\n"
-            )
-            time.sleep(login_wait)
+            from sharepoint_live import _wait_for_sharepoint_folder
+
+            _wait_for_sharepoint_folder(driver, sp_cfg, max_wait_seconds=login_wait)
         else:
             logger.info("Reusing open %s window for upload", browser_label)
             print(f"\n>>> Using the same {browser_label} window for upload (no new tab).\n")
@@ -316,7 +322,8 @@ def upload_file_via_selenium(config: dict, local_path: Path, driver=None) -> Non
                 driver.get(folder_page_url)
             except Exception:
                 pass
-            time.sleep(5)
+            # Already authenticated in this window — brief settle only.
+            time.sleep(2)
 
         upload_clicked = False
         for by, value in (

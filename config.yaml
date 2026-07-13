@@ -32,7 +32,9 @@ sharepoint:
   cache_to_disk: false
   browser: "edge"
   edge_path: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+  # Max wait for SharePoint login/folder. Continues as soon as the folder view is ready.
   login_wait_seconds: 180
+  login_poll_seconds: 1.5
   files:
     - name: "MPR Actuals and Goals_v2.xlsx"
       dest: "data/MPR Actuals and Goals_v2.xlsx"
