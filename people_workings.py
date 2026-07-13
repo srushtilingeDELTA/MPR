@@ -1,8 +1,8 @@
 """People slide (PPT 7) from New GSE MPR Workings.xlsx → PEOPLE tab.
 
-Screenshots the PEOPLE dashboard table into the template table slot and
-exports Excel charts into the two right-side chart slots. Leading Issues /
-Action Plans stay empty editable text boxes.
+Only the first PEOPLE metrics table matters, plus the three Excel charts on
+that sheet. Screenshots go into the template table slot and three right-side
+chart slots. Leading Issues / Action Plans stay empty editable text boxes.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import tempfile
 from pathlib import Path
 
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 from PIL import Image
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -24,22 +23,29 @@ from scorecard_screenshots import (
     _open_excel_workbook,
     _png_from_pil,
     _range_address,
-    _used_bounds,
     _validate_capture,
     capture_range_png,
-    capture_sheet_png,
     place_picture_on_slide,
     resolve_sheet_name,
 )
 
 logger = logging.getLogger(__name__)
 
-# Template slots from GSE MPR - Template.pptx slide 7 (index 6).
+# Template table slot from GSE MPR template slide 7.
 PEOPLE_TABLE_BOX = (362_427, 1_036_821, 7_426_936, 2_255_520)
+
+# Three chart slots stacked on the right (top slot added above the two template charts).
 PEOPLE_CHART_BOXES = [
-    (7_976_668, 2_817_996, 3_657_600, 1_800_225),  # Chart 28
-    (7_976_668, 4_675_371, 3_657_600, 1_792_605),  # Chart 29
+    (7_976_668, 1_036_821, 3_657_600, 1_700_000),  # top — beside table
+    (7_976_668, 2_817_996, 3_657_600, 1_800_225),  # middle — template Chart 28
+    (7_976_668, 4_675_371, 3_657_600, 1_792_605),  # bottom — template Chart 29
 ]
+
+# Hard stop markers once the first PEOPLE scorecard table is complete.
+_TABLE_END_TOKENS = (
+    "where i work, employees are held accountable",
+    "employees are held accountable",
+)
 
 
 def _cell_str(ws, row: int, col: int) -> str:
@@ -49,73 +55,64 @@ def _cell_str(ws, row: int, col: int) -> str:
     return str(val).strip()
 
 
-def _find_token(ws, tokens: list[str], *, max_row: int = 60, max_col: int = 20) -> tuple[int, int] | None:
-    needles = [t.casefold() for t in tokens]
+def _find_people_header(ws, *, max_row: int = 40, max_col: int = 12) -> tuple[int, int] | None:
+    """Find the first PEOPLE scorecard header (PEOPLE + MTD/YTD/Score)."""
     for row in range(1, max_row + 1):
         for col in range(1, max_col + 1):
             text = _cell_str(ws, row, col).casefold()
-            if not text:
+            if text != "people":
                 continue
-            for needle in needles:
-                if needle == text or needle in text:
-                    return row, col
+            # Confirm this is the scorecard header row, not a random label.
+            row_blob = " ".join(_cell_str(ws, row, c).casefold() for c in range(col, min(col + 8, max_col + 1)))
+            next_blob = " ".join(
+                _cell_str(ws, row + 1, c).casefold() for c in range(col, min(col + 8, max_col + 1))
+            )
+            if "mtd" in row_blob or "ytd" in row_blob or "score" in row_blob:
+                return row, col
+            if "actual" in next_blob or "goal" in next_blob:
+                return row, col
+    # Fallback: first Leadership Engagement block.
+    for row in range(1, max_row + 1):
+        for col in range(1, max_col + 1):
+            if "leadership engagement" in _cell_str(ws, row, col).casefold():
+                return max(1, row - 2), col
     return None
 
 
-def _dashboard_end_col(ws) -> int:
-    markers = ("yr_nb", "all", "mo_nb", "kpi", "entity", "num", "den")
-    for row in range(1, 30):
-        for col in range(8, min(40, int(ws.max_column or 40)) + 1):
-            text = _cell_str(ws, row, col).casefold()
-            if text in markers:
-                return max(7, col - 1)
-    return min(14, int(ws.max_column or 14))
-
-
-def _discover_people_table_range(workbook_bytes: bytes, sheet_name: str) -> tuple[int, int, int, int]:
-    """Return 1-based (start_row, end_row, start_col, end_col) for the PEOPLE metrics table."""
+def _discover_first_people_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, int, int, int]:
+    """Locate only the first PEOPLE MTD/YTD/Score table (ignore later tables/dumps)."""
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
     try:
         match = _find_sheet_name(list(wb.sheetnames), sheet_name) or sheet_name
         ws = wb[match]
-        max_col = _dashboard_end_col(ws)
-        hdr = _find_token(
-            ws,
-            ["people", "leadership engagement", "psychological safety", "accountability"],
-            max_col=max_col,
-        )
+        hdr = _find_people_header(ws)
         if hdr is None:
-            min_row, max_row, min_col, max_c = _used_bounds(ws)
-            return min_row, min(max_row, min_row + 25), min_col, min(max_c, max_col)
+            raise ValueError(f"Could not find PEOPLE scorecard header on {sheet_name!r}")
 
         start_row, start_col = hdr
-        # Include a title/header row above when present.
-        if start_row > 1:
-            above = _cell_str(ws, start_row - 1, start_col).casefold()
-            if above and ("people" in above or "mtd" in above or "actual" in above):
-                start_row -= 1
+        # Typical table is 7 columns: label + MTD Actual/B(W) + YTD Actual/B(W) + Score MTD/YTD.
+        end_col = start_col + 6
 
         end_row = start_row
-        empty_streak = 0
-        for row in range(start_row, min(int(ws.max_row or 80), start_row + 35) + 1):
-            row_has = any(_cell_str(ws, row, col) for col in range(start_col, max_col + 1))
-            if row_has:
-                end_row = row
-                empty_streak = 0
-            else:
-                empty_streak += 1
-                if empty_streak >= 2 and end_row > start_row:
-                    break
+        for row in range(start_row, min(int(ws.max_row or 40), start_row + 16) + 1):
+            label = _cell_str(ws, row, start_col).casefold()
+            row_has = any(_cell_str(ws, row, col) for col in range(start_col, end_col + 1))
+            if not row_has:
+                break
+            end_row = row
+            if any(token in label for token in _TABLE_END_TOKENS):
+                break
+            # Stop before a second major section / raw dump.
+            if row > start_row + 2 and label in {"people", "kpi", "yr_nb", "entity"}:
+                end_row = row - 1
+                break
 
-        end_col = start_col
-        for col in range(start_col, max_col + 1):
-            if any(_cell_str(ws, row, col) for row in range(start_row, end_row + 1)):
-                end_col = col
+        # Ensure we captured through Accountability when present.
+        if end_row < start_row + 8:
+            end_row = min(int(ws.max_row or 40), start_row + 9)
 
-        # Prefer at least the typical PEOPLE scorecard width.
-        end_col = max(end_col, min(max_col, start_col + 6))
         logger.info(
-            "PEOPLE table range %s!%s",
+            "PEOPLE first table %s!%s",
             match,
             _range_address(start_row, end_row, start_col, end_col),
         )
@@ -124,7 +121,7 @@ def _discover_people_table_range(workbook_bytes: bytes, sheet_name: str) -> tupl
         wb.close()
 
 
-def _export_sheet_charts(workbook_path: Path, sheet_name: str) -> list[bytes]:
+def _export_sheet_charts(workbook_path: Path, sheet_name: str, *, limit: int = 3) -> list[bytes]:
     """Export embedded Excel charts on a sheet as PNG bytes (top-to-bottom order)."""
     excel = None
     wb = None
@@ -173,7 +170,7 @@ def _export_sheet_charts(workbook_path: Path, sheet_name: str) -> list[bytes]:
         except Exception:
             pass
     pngs.sort(key=lambda item: item[0])
-    return [png for _, png in pngs]
+    return [png for _, png in pngs[:limit]]
 
 
 def _remove_people_data_shapes(slide) -> int:
@@ -187,11 +184,8 @@ def _remove_people_data_shapes(slide) -> int:
             drop = True
         elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
             top = int(shape.top)
-            # Keep footer logo.
-            if top < 6_000_000:
-                # Only remove pictures that sit in the table/chart band.
-                if top >= 900_000:
-                    drop = True
+            if 900_000 <= top < 6_000_000:
+                drop = True
         if not drop:
             continue
         shape._element.getparent().remove(shape._element)
@@ -200,10 +194,11 @@ def _remove_people_data_shapes(slide) -> int:
 
 
 def apply_people_workings_panels(slide, data, element: dict) -> bool:
-    """Fill slide 7 from Workings!PEOPLE screenshots (table + charts)."""
+    """Fill slide 7 from Workings!PEOPLE: first table + up to three charts."""
     workbook = element.get("workbook", "workings")
     prefer_com = bool(element.get("prefer_excel_com", True))
     fit = str(element.get("fit", "fill")).lower()
+    chart_limit = int(element.get("chart_count", 3) or 3)
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
@@ -234,10 +229,10 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
     out_dir.mkdir(parents=True, exist_ok=True)
     placed = 0
 
-    # 1) PEOPLE metrics table screenshot.
+    # 1) First PEOPLE metrics table only.
     table_png = None
     try:
-        start_row, end_row, start_col, end_col = _discover_people_table_range(workbook_bytes, sheet_name)
+        start_row, end_row, start_col, end_col = _discover_first_people_table(workbook_bytes, sheet_name)
         table_png = capture_range_png(
             workbook_bytes,
             sheet_name,
@@ -251,30 +246,17 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
             table_png, label=f"PEOPLE table {sheet_name}", min_w=80, min_h=40, require_wide=False
         )
     except Exception as exc:
-        logger.warning("PEOPLE table capture failed (%s); trying full sheet", exc)
-        try:
-            table_png = capture_sheet_png(
-                workbook_bytes,
-                sheet_name,
-                prefer_excel_com=prefer_com,
-                max_rows=element.get("max_rows", 40),
-                max_cols=element.get("max_cols", 12),
-            )
-            table_png = _validate_capture(
-                table_png, label=f"PEOPLE sheet {sheet_name}", min_w=80, min_h=40, require_wide=False
-            )
-        except Exception as exc2:
-            logger.warning("PEOPLE full-sheet capture also failed: %s", exc2)
-            table_png = None
+        logger.warning("PEOPLE first-table capture failed: %s", exc)
+        table_png = None
 
-    # 2) Excel chart exports (preferred for the two right-side slots).
+    # 2) Up to three Excel charts from the PEOPLE sheet.
     chart_pngs: list[bytes] = []
     if prefer_com:
         try:
             with tempfile.TemporaryDirectory(prefix="mpr_people_") as tmp:
                 path = Path(tmp) / "workings.xlsx"
                 path.write_bytes(workbook_bytes)
-                chart_pngs = _export_sheet_charts(path, sheet_name)
+                chart_pngs = _export_sheet_charts(path, sheet_name, limit=chart_limit)
         except Exception as exc:
             logger.info("PEOPLE Excel chart export unavailable: %s", exc)
 
@@ -302,13 +284,14 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
                 debug = out_dir / f"_debug_people_table_{img.width}x{img.height}.png"
                 img.save(debug)
                 print(
-                    f">>> PEOPLE table placed from workings/{sheet_name} "
+                    f">>> PEOPLE first table placed from workings/{sheet_name} "
                     f"({img.width}x{img.height}) -> {debug.name}"
                 )
         except Exception:
-            print(f">>> PEOPLE table placed from workings/{sheet_name}")
+            print(f">>> PEOPLE first table placed from workings/{sheet_name}")
 
-    for idx, box in enumerate(PEOPLE_CHART_BOXES):
+    boxes = PEOPLE_CHART_BOXES[:chart_limit]
+    for idx, box in enumerate(boxes):
         if idx >= len(chart_pngs):
             break
         left, top, width, height = box
@@ -326,9 +309,15 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
             with Image.open(io.BytesIO(chart_pngs[idx])) as img:
                 debug = out_dir / f"_debug_people_chart{idx+1}_{img.width}x{img.height}.png"
                 img.save(debug)
-                print(f">>> PEOPLE chart {idx+1} placed ({img.width}x{img.height}) -> {debug.name}")
+                print(f">>> PEOPLE chart {idx+1}/3 placed ({img.width}x{img.height}) -> {debug.name}")
         except Exception:
-            print(f">>> PEOPLE chart {idx+1} placed")
+            print(f">>> PEOPLE chart {idx+1}/3 placed")
+
+    if chart_pngs and len(chart_pngs) < 3:
+        logger.warning("PEOPLE sheet exported %s chart(s); expected 3", len(chart_pngs))
+        print(f">>> WARNING: expected 3 PEOPLE charts, exported {len(chart_pngs)}")
+    elif not chart_pngs:
+        print(">>> WARNING: no PEOPLE charts exported (Excel COM required on Windows)")
 
     if bool(element.get("clear_narrative", True)):
         n = clear_leading_action_narrative(slide)
@@ -336,6 +325,6 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
 
     print(
         f"\n>>> Slide 7 People: placed {placed} screenshot(s) from workings/{sheet_name} "
-        f"(table={'yes' if table_png else 'no'}, charts={min(len(chart_pngs), len(PEOPLE_CHART_BOXES))})\n"
+        f"(first table={'yes' if table_png else 'no'}, charts={min(len(chart_pngs), len(boxes))}/3)\n"
     )
     return placed > 0

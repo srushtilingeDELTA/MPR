@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.13-people-workings"
+SCRIPT_VERSION = "2026.07.13-people-table-3charts"
 
 import logging
 from pathlib import Path

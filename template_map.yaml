@@ -89,7 +89,7 @@ slides:
         # sheet: "EAC"
         # sheet_match: ["EAC", "ASAP"]
   # PPT 7 — People from New GSE MPR Workings.xlsx → PEOPLE tab
-  # Screenshot PEOPLE metrics table + Excel charts into template slots.
+  # Only the first PEOPLE MTD/YTD/Score table + the three Excel charts.
   # Leading Issues / Action Plans cleared to empty editable boxes.
   - index: 6
     name: people
@@ -99,6 +99,7 @@ slides:
         workbook: workings
         sheet: "PEOPLE"
         sheet_match: ["PEOPLE", "People"]
+        chart_count: 3
         fit: fill
         clear_narrative: true
         optional: false

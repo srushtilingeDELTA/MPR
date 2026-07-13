@@ -967,6 +967,32 @@ def _verify_output(prs: Presentation) -> None:
     else:
         print("VERIFY slide 6 EA narrative: Leading Issues / Action Plan boxes are empty")
 
+    # Slide 7 People: first PEOPLE table + up to 3 chart screenshots.
+    people = prs.slides[6]
+    people_tables = sum(1 for s in people.shapes if getattr(s, "has_table", False))
+    people_charts = sum(1 for s in people.shapes if getattr(s, "has_chart", False))
+    people_pics = [
+        s
+        for s in people.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 6_000_000
+    ]
+    print(
+        f"VERIFY slide 7 People: {len(people_pics)} content picture(s), "
+        f"{people_tables} table(s), {people_charts} chart(s)"
+    )
+    if len(people_pics) < 1:
+        logger.warning("Slide 7 People expected Workings PEOPLE screenshot(s), found none")
+    if people_tables:
+        logger.warning("Slide 7 People still has %s native table(s)", people_tables)
+    if people_charts:
+        logger.warning("Slide 7 People still has %s native chart(s)", people_charts)
+    # Prefer table + 3 charts (=4), but chart export needs Excel COM.
+    if 1 <= len(people_pics) < 4:
+        print(
+            f"VERIFY slide 7 People note: {len(people_pics)} picture(s) placed "
+            "(table + charts; 4 total when Excel exports all 3 charts)"
+        )
+
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
     ppt_cfg = config["powerpoint"]
