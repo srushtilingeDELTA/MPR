@@ -71,14 +71,6 @@ powerpoint:
   output_name: "GSE_MPR_Report_{year}_{month:02d}.pptx"
   clear_unmapped_slides: false
 
-slides:
-  gir: 4
-  people: 6
-  pmi: 10
-  isr: 11
-  operations: 19
-  vos: 21
-
 kpi_mappings:
   gir: "GIR"
   injury_count: "Injury Count"

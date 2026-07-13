@@ -1,9 +1,10 @@
-﻿Office365-REST-Python-Client>=2.5.0
-msal>=1.28.0
-selenium>=4.15.0
+﻿selenium>=4.15.0
 webdriver-manager>=4.0.0
-beautifulsoup4>=4.12.0
 requests>=2.31.0
 pillow>=10.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+python-pptx>=0.6.21
+PyYAML>=6.0
 # Windows only — enables true Excel CopyPicture screenshots for System scorecards
 pywin32>=306; platform_system=="Windows"

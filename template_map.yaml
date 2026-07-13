@@ -12,6 +12,9 @@ slides:
   - index: 1
     name: agenda
     keep_title: true
+    elements:
+      # Restore Planned Discussion topics/times (never clear this slide).
+      - type: agenda
 
   # PPT slides 3-4 = System Scorecard screenshots from Scorecards → System tab
   - index: 2

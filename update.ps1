@@ -8,21 +8,29 @@ $RepoBase = "https://raw.githubusercontent.com/srushtilingeDELTA/MPR/main"
 $Files = @(
     "main.py",
     "config.yaml",
+    "template_map.yaml",
     "requirements.txt",
     "setup.ps1",
     "update.ps1",
     "README.md",
     "mpr_data.py",
     "ppt_builder.py",
+    "ppt_format.py",
     "report_utils.py",
-    "sharepoint_excel.py",
+    "workbook_store.py",
+    "scorecard_screenshots.py",
+    "sharepoint_live.py",
     "sharepoint_selenium.py",
-    "scripts/list_sheets.py",
     "scripts/verify_setup.py",
-    "scripts/inspect_excel.py",
-    "scripts/inspect_template.py",
     "scripts/inspect_kpis.py",
-    "scripts/download_from_sharepoint.py"
+    "scripts/inspect_scorecard_system.py",
+    "scripts/slide_review.py",
+    "scripts/dump_template_inventory.py",
+    "scripts/list_workbook_sheets.py",
+    "scripts/download_from_sharepoint.py",
+    "scripts/sync_sharepoint_files.py",
+    "scripts/list_sharepoint_folder.py",
+    "scripts/upload_report_to_sharepoint.py"
 )
 
 Write-Host "=== Updating GSE MPR project files ===" -ForegroundColor Cyan

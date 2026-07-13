@@ -1,12 +1,7 @@
 """Download MPR Excel from SharePoint using Selenium (Delta SSO / MFA).
 
-Use Edge or Chrome with manual login when the Office365 SDK is blocked by
-conditional access. Opens the SharePoint folder page from config, waits for
-you to sign in, then finds the Excel file and downloads it.
-
-Usage:
-    python scripts/download_from_sharepoint.py --method selenium
-    python scripts/download_from_sharepoint.py --method selenium --browser edge
+Browser helpers for Edge/Chrome when interactive login is required.
+Primary sync/upload for the report pipeline lives in sharepoint_live.py.
 """
 
 from __future__ import annotations

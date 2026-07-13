@@ -101,14 +101,77 @@ def _replace_text(text: str, data: MprData) -> str:
     return updated
 
 
-def replace_month_tokens(prs: Presentation, data: MprData) -> None:
-    for slide in prs.slides:
-        for shape in _iter_all_shapes(slide.shapes):
-            if not shape.has_text_frame:
+def replace_month_tokens_on_slide(slide, data: MprData) -> None:
+    """Update month/year tokens on a single slide only."""
+    for shape in _iter_all_shapes(slide.shapes):
+        if not shape.has_text_frame:
+            continue
+        for paragraph in shape.text_frame.paragraphs:
+            original = paragraph.text
+            if not original.strip():
                 continue
-            for paragraph in shape.text_frame.paragraphs:
-                if paragraph.text.strip():
-                    set_paragraph_text_preserve(paragraph, _replace_text(paragraph.text, data))
+            updated = _replace_text(original, data)
+            if updated != original:
+                set_paragraph_text_preserve(paragraph, updated)
+
+
+# Planned Discussion (slide 2) — static agenda matching the GSE MPR template.
+AGENDA_TOPICS: list[tuple[str, str]] = [
+    ("Safety", "10 min"),
+    ("People", "10 min"),
+    ("Finance", "10 min"),
+    ("Customer Experience", "10 min"),
+    ("North (M)", "10 min"),
+    ("South (M)", "10 min"),
+    ("Stationary", "15 min"),
+    ("Galley", "10 min"),
+    ("Closing", "3 min"),
+]
+
+
+def fill_agenda_slide(slide) -> None:
+    """Restore Planned Discussion topic titles and time ovals left-to-right.
+
+    The template uses separate text boxes (titles) and bottom ovals (times).
+    Older builds cleared those; this writes the canonical agenda back in.
+    """
+    title_boxes = [
+        shape
+        for shape in slide.shapes
+        if shape.has_text_frame
+        and 1_700_000 <= int(shape.top) <= 2_100_000
+        and int(shape.width) > 500_000
+    ]
+    time_ovals = [
+        shape
+        for shape in slide.shapes
+        if shape.has_text_frame
+        and "oval" in (shape.name or "").lower()
+        and int(shape.top) > 4_700_000
+    ]
+    title_boxes.sort(key=lambda s: int(s.left))
+    time_ovals.sort(key=lambda s: int(s.left))
+
+    if len(title_boxes) < len(AGENDA_TOPICS):
+        logger.warning(
+            "Agenda slide: expected %s topic title boxes, found %s",
+            len(AGENDA_TOPICS),
+            len(title_boxes),
+        )
+    if len(time_ovals) < len(AGENDA_TOPICS):
+        logger.warning(
+            "Agenda slide: expected %s time ovals, found %s",
+            len(AGENDA_TOPICS),
+            len(time_ovals),
+        )
+
+    for idx, (topic, minutes) in enumerate(AGENDA_TOPICS):
+        if idx < len(title_boxes):
+            set_text_frame_preserve(title_boxes[idx].text_frame, topic)
+        if idx < len(time_ovals):
+            set_text_frame_preserve(time_ovals[idx].text_frame, minutes)
+
+    logger.info("Filled Planned Discussion agenda (%s topics)", len(AGENDA_TOPICS))
 
 
 def _build_chart_data(actuals: list[float | None], goal: float | None, existing_chart) -> CategoryChartData:
@@ -380,8 +443,10 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
     workbook = element.get("workbook", "actuals")
 
     if etype == "month_tokens":
-        return
-    if etype == "gir_tables":
+        replace_month_tokens_on_slide(slide, data)
+    elif etype == "agenda":
+        fill_agenda_slide(slide)
+    elif etype == "gir_tables":
         update_gir_tables(slide, data, config, workbook)
     elif etype == "gir_charts":
         update_gir_charts(slide, data, config, workbook)
@@ -407,7 +472,7 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
 def _apply_slide_spec(slide, data: MprData, config: dict, slide_spec: dict) -> None:
     """Apply mapped updates while preserving the rest of the template slide."""
-    # Intentionally do NOT clear pictures/text up front — that destroyed template look.
+    # Never wipe template chrome. Only touch mapped elements.
     for element in slide_spec.get("elements", []):
         _apply_element(slide, data, config, element)
 
@@ -454,7 +519,6 @@ def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
     output_path = output_dir / output_name
 
     prs = _load_template(config, base_dir)
-    replace_month_tokens(prs, data)
 
     slide_specs = load_template_map(base_dir)
     if slide_specs:
@@ -464,10 +528,12 @@ def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
             if spec:
                 _apply_slide_spec(slide, data, config, spec)
                 logger.info("Processed slide %s (%s)", idx, spec.get("name", ""))
-            elif config.get("powerpoint", {}).get("clear_unmapped_slides", False):
+            elif ppt_cfg.get("clear_unmapped_slides", False):
                 _clear_non_title_content(slide)
     else:
-        logger.warning("template_map.yaml not found — only month tokens were updated.")
+        logger.warning("template_map.yaml not found — applying month tokens on slide 0 only.")
+        if prs.slides:
+            replace_month_tokens_on_slide(prs.slides[0], data)
 
     prs.save(output_path)
     logger.info("Saved report: %s", output_path)
