@@ -605,6 +605,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
         update_gir_tables(slide, data, config, workbook)
     elif etype == "gir_charts":
         update_gir_charts(slide, data, config, workbook)
+    elif etype == "gir_workings_panels":
+        from gir_panels import apply_gir_workings_panels
+
+        if not apply_gir_workings_panels(slide, data, element) and not optional:
+            logger.warning("No GIR workings panels for element %s", element)
     elif etype == "people_table":
         update_people_table(slide, data, element.get("rows", []), workbook)
     elif etype == "people_charts":
@@ -690,7 +695,7 @@ def _verify_output(prs: Presentation) -> None:
     if leftover_text:
         logger.warning("Agenda still has %s note-band shape(s) with leftover text", leftover_text)
 
-    for idx, label in ((2, "slide 3 System"), (3, "slide 4 System"), (4, "slide 5 GIR")):
+    for idx, label in ((2, "slide 3 System"), (3, "slide 4 System")):
         slide = prs.slides[idx]
         pics = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
         print(f"VERIFY {label}: {len(pics)} picture(s)")
@@ -733,11 +738,25 @@ def _verify_output(prs: Presentation) -> None:
             except Exception as exc:
                 logger.warning("%s could not inspect image blob: %s", label, exc)
 
-    # GIR should no longer keep the old template chart once the workings screenshot lands.
+    # GIR should show multiple panel pictures and no leftover template chart.
     gir = prs.slides[4]
     gir_charts = sum(1 for s in gir.shapes if getattr(s, "has_chart", False))
+    gir_pics = sum(1 for s in gir.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE)
+    print(f"VERIFY slide 5 GIR panels: {gir_pics} picture(s), {gir_charts} chart(s)")
+    if gir_pics < 2:
+        logger.warning("Slide 5 GIR expected multiple panel screenshots, found %s", gir_pics)
     if gir_charts:
-        logger.warning("Slide 5 GIR still has %s template chart(s) — expected workings screenshot only", gir_charts)
+        logger.warning("Slide 5 GIR still has %s template chart(s)", gir_charts)
+    narrative_left = [
+        (s.text_frame.text or "").strip()
+        for s in gir.shapes
+        if getattr(s, "has_text_frame", False) and int(s.top) >= 4_900_000 and int(s.height) > 400_000
+    ]
+    leftover = [t for t in narrative_left if t]
+    if leftover:
+        logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
+    else:
+        print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:

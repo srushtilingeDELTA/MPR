@@ -1197,7 +1197,14 @@ def _autocrop_whitespace(png_bytes: bytes, *, threshold: int = 248, pad: int = 4
         return _png_from_pil(rgb.crop(box))
 
 
-def _validate_capture(png_bytes: bytes, *, label: str, min_w: int = 400, min_h: int = 150) -> bytes:
+def _validate_capture(
+    png_bytes: bytes,
+    *,
+    label: str,
+    min_w: int = 400,
+    min_h: int = 150,
+    require_wide: bool = True,
+) -> bytes:
     png_bytes = _autocrop_whitespace(png_bytes)
     with Image.open(io.BytesIO(png_bytes)) as img:
         width, height = img.width, img.height
@@ -1206,9 +1213,9 @@ def _validate_capture(png_bytes: bytes, *, label: str, min_w: int = 400, min_h: 
         raise RuntimeError(f"{label} capture too small: {width}x{height}")
     if _is_mostly_blank(png):
         raise RuntimeError(f"{label} capture is mostly blank/white ({width}x{height}, {len(png)} bytes)")
-    # Template EMFs are ~2094px wide scorecards — reject tiny/odd aspect grabs.
+    # Template System EMFs are wide scorecards — optional for smaller GIR panels.
     aspect = width / max(height, 1)
-    if aspect < 1.2:
+    if require_wide and aspect < 1.2:
         raise RuntimeError(
             f"{label} capture aspect {aspect:.2f} looks wrong for a scorecard "
             f"({width}x{height}) — expected a wide grid like the template"
@@ -1866,9 +1873,12 @@ def _remove_slide_tables_and_charts(
         if is_label:
             text = (shape.text_frame.text or "").strip().casefold()
             # Keep chrome titles / speaker; drop in-band labels like "System GIR".
-            if not text or "speaker" in text or text in {"gir", "safety"}:
+            if not text or "speaker" in text or text in {"gir", "safety", "system gir"}:
                 continue
             if int(shape.top) < 650_000:
+                continue
+            # Keep the template "System GIR" label above the chart.
+            if "system gir" in text:
                 continue
         elif not is_table and not is_chart:
             continue

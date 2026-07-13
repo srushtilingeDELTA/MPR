@@ -61,7 +61,9 @@ def main() -> int:
             if shown >= 40:
                 break
     wb.close()
-    print("\nSlide 5 will screenshot this sheet into the GIR content band.")
+    print("\nSlide 5 maps GIR dashboard panels (chart/summary/injury/recordable/metric)")
+    print("into the template slots and clears Leading Issues / Action Plan text.")
+    print("Raw ALL / NO 115 dumps are excluded.")
     return 0
 
 
