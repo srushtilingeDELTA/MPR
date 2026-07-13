@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.13-ea-asap-one-shot"
+SCRIPT_VERSION = "2026.07.13-ea-asap-single-table"
 
 import logging
 from pathlib import Path

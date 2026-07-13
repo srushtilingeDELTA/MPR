@@ -903,7 +903,7 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
     else:
         print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")
-    # Slide 6 EA/ASAP: one Workings screenshot on the left; empty narrative boxes.
+    # Slide 6 EA/ASAP: exactly one table screenshot in the template OLE slot.
     ea = prs.slides[5]
     ea_pics = [
         s
@@ -925,9 +925,22 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 6 EA/ASAP still has %s embedded OLE object(s)", len(ea_ole))
     if ea_pics:
         pic = ea_pics[0]
+        # Should roughly fill the template OLE rectangle.
+        if abs(int(pic.left) - 314_628) > 80_000 or abs(int(pic.top) - 916_047) > 80_000:
+            logger.warning(
+                "Slide 6 EA/ASAP image not in template OLE slot (L=%s T=%s)",
+                int(pic.left),
+                int(pic.top),
+            )
+        if int(pic.width) < 7_000_000 or int(pic.height) < 3_200_000:
+            logger.warning(
+                "Slide 6 EA/ASAP image smaller than template OLE slot (W=%s H=%s)",
+                int(pic.width),
+                int(pic.height),
+            )
         right = int(pic.left) + int(pic.width)
         bottom = int(pic.top) + int(pic.height)
-        if right > 8_350_000:
+        if right > 8_400_000:
             logger.warning("Slide 6 EA/ASAP image may overlap Leading Issues (right=%s)", right)
         if bottom > 6_300_000:
             logger.warning("Slide 6 EA/ASAP image may overlap footer logo (bottom=%s)", bottom)

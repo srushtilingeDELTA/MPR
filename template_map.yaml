@@ -74,27 +74,20 @@ slides:
         optional: false
 
   # PPT 6 — EA Compliance / ASAP from New GSE MPR Workings.xlsx
-  # Screenshot EAC + ASAP tabs into the left content slot (replaces template OLE).
-  # Leading Issues / Action Plan body text cleared to empty editable boxes.
+  # One combined EA COMPLIANCE | ASAP REPORTING table screenshot (never duplicated).
+  # Placed once into the template OLE slot; Leading Issues / Action Plan stay empty.
   - index: 5
     name: ea_asap
     keep_title: true
     elements:
       - type: ea_asap_workings_panels
         workbook: workings
-        fit: contain
+        fit: fill
         clear_narrative: true
         optional: false
-        # Capture each tab once, stitch into one image, place once (no duplicates).
-        panels:
-          - key: eac
-            sheet: "EAC"
-            sheet_match: ["EAC"]
-            label: "EAC"
-          - key: asap
-            sheet: "ASAP"
-            sheet_match: ["ASAP"]
-            label: "ASAP"
+        # Optional hard pin if auto sheet pick is wrong:
+        # sheet: "EAC"
+        # sheet_match: ["EAC", "ASAP"]
   # PPT 7 — People (live table + charts from actuals)
   - index: 6
     name: people
