@@ -88,29 +88,20 @@ slides:
         # Optional hard pin if auto sheet pick is wrong:
         # sheet: "EAC"
         # sheet_match: ["EAC", "ASAP"]
-  # PPT 7 — People (live table + charts from actuals)
+  # PPT 7 — People from New GSE MPR Workings.xlsx → PEOPLE tab
+  # Screenshot PEOPLE metrics table + Excel charts into template slots.
+  # Leading Issues / Action Plans cleared to empty editable boxes.
   - index: 6
     name: people
     keep_title: true
     elements:
-      - type: people_table
-        workbook: actuals
-        rows:
-          - label: "LEADERSHIP ENGAGEMENT"
-            patterns: ["Leadership Engagement", "LEADERSHIP ENGAGEMENT"]
-          - label: "PSYCHOLOGICAL SAFETY"
-            patterns: ["Psychological Safety", "PSYCHOLOGICAL SAFETY"]
-          - label: "ACCOUNTABILITY"
-            patterns: ["Accountability", "ACCOUNTABILITY"]
-      - type: people_charts
-        workbook: actuals
-        charts:
-          - title: "Leadership Engagement"
-            patterns: ["Leadership Engagement", "LEADERSHIP ENGAGEMENT"]
-          - title: "Psychological Safety"
-            patterns: ["Psychological Safety", "PSYCHOLOGICAL SAFETY"]
-          - title: "Accountability"
-            patterns: ["Accountability", "ACCOUNTABILITY"]
+      - type: people_workings_panels
+        workbook: workings
+        sheet: "PEOPLE"
+        sheet_match: ["PEOPLE", "People"]
+        fit: fill
+        clear_narrative: true
+        optional: false
 
   # PPT 8 — Finance overview (workings workbook screenshot)
   - index: 7

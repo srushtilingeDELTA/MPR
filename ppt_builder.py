@@ -736,6 +736,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_ea_asap_workings_panels(slide, data, element) and not optional:
             logger.warning("No Workings EAC/ASAP panels for element %s", element)
+    elif etype == "people_workings_panels":
+        from people_workings import apply_people_workings_panels
+
+        if not apply_people_workings_panels(slide, data, element) and not optional:
+            logger.warning("No Workings PEOPLE panels for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
