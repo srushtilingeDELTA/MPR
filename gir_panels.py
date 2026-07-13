@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from PIL import Image
 
-from ppt_format import clear_text_frame_content
+from ppt_format import clear_text_frame_content, set_text_frame_preserve
 from scorecard_screenshots import (
     _find_sheet_name,
     _open_excel_workbook,
@@ -290,24 +290,69 @@ def _capture_block_png(
     )
 
 
-def clear_gir_narrative_textboxes(slide) -> int:
-    """Clear Leading Issues / Action Plan body text; leave empty editable boxes + headers."""
+def clear_leading_action_narrative(slide) -> int:
+    """Clear Leading Issues / Action Plan body text; keep headers and empty editable boxes.
+
+    Works across GIR (bottom band) and EA/ASAP (right-side stacked boxes).
+    """
+    headers = []
+    for shape in slide.shapes:
+        if not getattr(shape, "has_text_frame", False):
+            continue
+        text = (shape.text_frame.text or "").strip().casefold()
+        if "leading issue" in text or text.startswith("action plan"):
+            headers.append(shape)
+
+    # Slide 6 sometimes has an empty Action Plan title box above the body.
+    if headers:
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            # Only fill empty title text boxes — not the red header rectangles.
+            if "textbox" not in (shape.name or "").casefold():
+                continue
+            text = (shape.text_frame.text or "").strip()
+            if text:
+                continue
+            top = int(shape.top)
+            if int(shape.height) > 350_000 or int(shape.height) < 200_000:
+                continue
+            for header in headers:
+                if abs(int(shape.left) - int(header.left)) < 800_000 and top > int(header.top) + 1_500_000:
+                    set_text_frame_preserve(shape.text_frame, "Action Plan")
+                    headers.append(shape)
+                    logger.info("Restored empty Action Plan header on %s", shape.name)
+                    break
+
     cleared = 0
     for shape in slide.shapes:
         if not getattr(shape, "has_text_frame", False):
             continue
-        top = int(shape.top)
-        if top < 4_850_000:
-            continue
         text = (shape.text_frame.text or "").strip()
         lower = text.casefold()
-        # Keep section titles on the red header bars.
-        if "leading" in lower or "action plan" in lower:
+        if "leading issue" in lower or lower.startswith("action plan"):
             continue
-        if int(shape.height) < 400_000:
+        if int(shape.height) < 500_000:
             continue
+        if int(shape.top) < 800_000:
+            continue
+
+        mid_x = int(shape.left) + int(shape.width) // 2
+        near_header = False
+        for header in headers:
+            h_mid = int(header.left) + int(header.width) // 2
+            # Same column as a Leading Issues / Action Plan header, and below it.
+            if abs(mid_x - h_mid) <= 2_200_000 and int(shape.top) > int(header.top) + 100_000:
+                near_header = True
+                break
+        if not near_header and not headers:
+            # Fallback for GIR bottom band when headers weren't matched.
+            if int(shape.top) >= 4_850_000:
+                near_header = True
+        if not near_header:
+            continue
+
         clear_text_frame_content(shape.text_frame)
-        # Ensure the box stays editable with a blank run.
         tf = shape.text_frame
         if tf.paragraphs:
             para = tf.paragraphs[0]
@@ -316,8 +361,14 @@ def clear_gir_narrative_textboxes(slide) -> int:
             else:
                 para.add_run().text = ""
         cleared += 1
-        logger.info("Cleared GIR narrative box %s", shape.name)
+        logger.info("Cleared narrative box %s", shape.name)
+
     return cleared
+
+
+def clear_gir_narrative_textboxes(slide) -> int:
+    """Backward-compatible alias for GIR slide narrative clearing."""
+    return clear_leading_action_narrative(slide)
 
 
 def apply_gir_workings_panels(slide, data, element: dict) -> bool:

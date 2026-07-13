@@ -93,6 +93,8 @@ slides:
         replace_existing_pictures: true
         fit: fill
         optional: true
+      - type: clear_narrative
+        # Empty Leading Issues / Action Plan body text boxes (headers kept)
 
   # PPT 7 — People (live table + charts from actuals)
   - index: 6

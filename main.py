@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.13-gir-multi-panels"
+SCRIPT_VERSION = "2026.07.13-ea-clear-narrative"
 
 import logging
 from pathlib import Path

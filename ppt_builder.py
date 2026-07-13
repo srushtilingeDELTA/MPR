@@ -610,6 +610,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_gir_workings_panels(slide, data, element) and not optional:
             logger.warning("No GIR workings panels for element %s", element)
+    elif etype == "clear_narrative":
+        from gir_panels import clear_leading_action_narrative
+
+        n = clear_leading_action_narrative(slide)
+        print(f">>> Cleared Leading Issues / Action Plan text ({n} box(es)) on slide")
     elif etype == "people_table":
         update_people_table(slide, data, element.get("rows", []), workbook)
     elif etype == "people_charts":
@@ -755,8 +760,23 @@ def _verify_output(prs: Presentation) -> None:
     leftover = [t for t in narrative_left if t]
     if leftover:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
+    # Slide 6 EA/ASAP narrative boxes should also be empty/editable.
+    ea = prs.slides[5]
+    ea_bodies = [
+        s
+        for s in ea.shapes
+        if getattr(s, "has_text_frame", False)
+        and int(s.height) > 500_000
+        and int(s.top) > 1_000_000
+    ]
+    ea_leftover = [ (s.text_frame.text or "").strip() for s in ea_bodies if (s.text_frame.text or "").strip() ]
+    # Filter out title-like leftovers
+    ea_leftover = [t for t in ea_leftover if "leading" not in t.casefold() and not t.casefold().startswith("action plan")]
+    print(f"VERIFY slide 6 EA narrative leftover bodies: {len(ea_leftover)}")
+    if ea_leftover:
+        logger.warning("Slide 6 EA narrative still has text: %s", ea_leftover[:2])
     else:
-        print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")
+        print("VERIFY slide 6 EA narrative: Leading Issues / Action Plan boxes are empty")
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
