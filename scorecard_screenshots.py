@@ -992,8 +992,13 @@ def place_picture_on_slide(
     top: int = DEFAULT_TOP,
     max_width: int = DEFAULT_WIDTH,
     max_height: int = DEFAULT_HEIGHT,
+    fit: str = "fill",
 ) -> None:
-    """Add a PNG fitted into the content area, preserving aspect ratio."""
+    """Place a PNG into the content area.
+
+    fit=fill  -> stretch exactly into the box (matches template picture slots)
+    fit=contain -> preserve aspect ratio inside the box
+    """
     from pptx.util import Emu
 
     with Image.open(io.BytesIO(png_bytes)) as img:
@@ -1001,17 +1006,51 @@ def place_picture_on_slide(
     if img_w <= 0 or img_h <= 0:
         return
 
-    # Prefer width-fill for wide scorecard grids like the System tab.
-    scale = min(max_width / img_w, max_height / img_h)
-    width = int(img_w * scale)
-    height = int(img_h * scale)
-    left_pos = left + max(0, (max_width - width) // 2)
-    top_pos = top
-    slide.shapes.add_picture(io.BytesIO(png_bytes), Emu(left_pos), Emu(top_pos), Emu(width), Emu(height))
+    if fit == "contain":
+        scale = min(max_width / img_w, max_height / img_h)
+        width = int(img_w * scale)
+        height = int(img_h * scale)
+        left_pos = left + max(0, (max_width - width) // 2)
+        top_pos = top + max(0, (max_height - height) // 2)
+    else:
+        # Fill the template picture rectangle exactly.
+        width = int(max_width)
+        height = int(max_height)
+        left_pos = int(left)
+        top_pos = int(top)
+
+    slide.shapes.add_picture(
+        io.BytesIO(png_bytes),
+        Emu(left_pos),
+        Emu(top_pos),
+        Emu(width),
+        Emu(height),
+    )
+
+
+def _largest_picture(slide):
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    pictures = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    if not pictures:
+        return None
+    return max(pictures, key=lambda s: int(s.width) * int(s.height))
+
+
+def _remove_slide_pictures(slide) -> int:
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    removed = 0
+    for shape in list(slide.shapes):
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            element = shape._element
+            element.getparent().remove(element)
+            removed += 1
+    return removed
 
 
 def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
-    """Element handler: screenshot System scorecard sections onto a slide."""
+    """Replace the template System Scorecard picture with a live Excel screenshot."""
     workbook = element.get("workbook", "scorecards")
     sheet_name = element.get("sheet", "System")
     mode = element.get("sections", "first")
@@ -1020,6 +1059,8 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     match = element.get("match") or []
     fallback_indices = element.get("fallback_indices") or element.get("indices") or []
     prefer_com = bool(element.get("prefer_excel_com", True))
+    replace_existing = bool(element.get("replace_existing_pictures", True))
+    fit = str(element.get("fit", "fill")).lower()
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
@@ -1050,7 +1091,6 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         )
         return False
 
-    # Optional explicit A1 ranges override auto selection.
     explicit = element.get("range")
     if explicit:
         from openpyxl.utils.cell import range_boundaries
@@ -1076,16 +1116,37 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     if not png:
         return False
 
+    # Use the template picture slot geometry when present so placement matches the deck.
+    target = _largest_picture(slide)
+    if target is not None:
+        left, top, width, height = int(target.left), int(target.top), int(target.width), int(target.height)
+    else:
+        left = int(element.get("left", DEFAULT_LEFT))
+        top = int(element.get("top", DEFAULT_TOP))
+        width = int(element.get("max_width", DEFAULT_WIDTH))
+        height = int(element.get("max_height", DEFAULT_HEIGHT))
+
+    if replace_existing:
+        removed = _remove_slide_pictures(slide)
+        if removed:
+            logger.info("Removed %s template picture(s) before placing live scorecard image", removed)
+
     place_picture_on_slide(
         slide,
         png,
-        left=int(element.get("left", DEFAULT_LEFT)),
-        top=int(element.get("top", DEFAULT_TOP)),
-        max_width=int(element.get("max_width", DEFAULT_WIDTH)),
-        max_height=int(element.get("max_height", DEFAULT_HEIGHT)),
+        left=left,
+        top=top,
+        max_width=width,
+        max_height=height,
+        fit=fit,
     )
     logger.info(
-        "Placed System scorecard image on slide sections=%s",
+        "Placed System scorecard image on slide sections=%s box=(%s,%s,%s,%s) fit=%s",
         [s.title for s in chosen],
+        left,
+        top,
+        width,
+        height,
+        fit,
     )
     return True

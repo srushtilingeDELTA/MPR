@@ -406,22 +406,10 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
 
 def _apply_slide_spec(slide, data: MprData, config: dict, slide_spec: dict) -> None:
-    if slide_spec.get("clear_pictures"):
-        for shape in list(slide.shapes):
-            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE and not _is_title_shape(slide, shape):
-                _remove_shape(shape)
-
+    """Apply mapped updates while preserving the rest of the template slide."""
+    # Intentionally do NOT clear pictures/text up front — that destroyed template look.
     for element in slide_spec.get("elements", []):
         _apply_element(slide, data, config, element)
-
-    if slide_spec.get("clear_non_titles"):
-        for shape in list(slide.shapes):
-            if _is_title_shape(slide, shape):
-                continue
-            if shape.has_table:
-                clear_table_data_rows(shape.table, header_rows=1)
-            elif shape.has_text_frame:
-                clear_text_frame_content(shape.text_frame)
 
 
 def load_template_map(base_dir: Path) -> list[dict]:

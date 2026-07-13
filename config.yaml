@@ -66,7 +66,7 @@ powerpoint:
   template_path: "templates/GSE MPR - Template.pptx"
   template_map: "template_map.yaml"
   output_dir: "output"
-  output_name: "GSE MPR - {month_name} {year}.pptx"
+  output_name: "GSE_MPR_Report_{year}_{month:02d}.pptx"
   clear_unmapped_slides: false
 
 slides:
