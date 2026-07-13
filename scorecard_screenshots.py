@@ -332,13 +332,61 @@ def _normalize_month_token(text: str) -> str:
     return cleaned
 
 
+def _find_weight_col(
+    ws: Worksheet,
+    month_row: int | None,
+    min_col: int,
+    max_col: int,
+) -> int | None:
+    """Locate the WEIGHT column that sits just right of the colored category bars."""
+    row_start = max(1, (month_row or 5) - 2)
+    row_end = (month_row or 5) + 4
+    for row in range(row_start, row_end + 1):
+        for col in range(min_col, max_col + 1):
+            if _normalize_label(_cell_text(ws.cell(row, col))) == "weight":
+                return col
+    return None
+
+
+def _find_category_bar_col(
+    ws: Worksheet,
+    min_col: int,
+    max_col: int,
+    body_start: int,
+    *,
+    weight_col: int | None = None,
+) -> int | None:
+    """First column of the colored category rail (Safety / Finance / etc.)."""
+    limit = weight_col if weight_col is not None else min(max_col, min_col + 6)
+    for col in range(min_col, limit + 1):
+        for row in range(body_start, body_start + 50):
+            text = _cell_text(ws.cell(row, col))
+            if _is_category_title(text):
+                return col
+            fill = _fill_rgb(ws.cell(row, col))
+            # Strong colored fill left of WEIGHT = category bar (not the pale % rail).
+            if (
+                fill
+                and _luminance(fill) < 170
+                and max(fill) - min(fill) > 25
+                and (weight_col is None or col < weight_col)
+            ):
+                return col
+    if weight_col is not None and weight_col > min_col:
+        return weight_col - 1
+    return None
+
+
 def _scorecard_content_cols(
     ws: Worksheet,
     month_row: int | None,
     min_col: int,
     max_col: int,
+    *,
+    body_start: int | None = None,
 ) -> tuple[int, int]:
-    """Trim capture width to the KPI/month table (avoid huge empty trailing columns)."""
+    """Trim capture to colored category bars through YE (skip duplicate % column on the left)."""
+    end = max_col
     if month_row:
         month_cols: list[int] = []
         for col in range(min_col, max_col + 1):
@@ -346,16 +394,78 @@ def _scorecard_content_cols(
             if token and (token in MONTH_HEADER_TOKENS or token[:3] in MONTH_HEADER_TOKENS):
                 month_cols.append(col)
         if month_cols:
-            # Keep left label columns (category / WEIGHT / KPI) through YE.
-            return min_col, max(month_cols)
+            end = max(month_cols)
 
-    end = max_col
-    sample_rows = list(range(1, min(40, int(ws.max_row or 40)) + 1))
-    while end > min_col:
-        if any(_cell_text(ws.cell(r, end)) or _fill_rgb(ws.cell(r, end)) for r in sample_rows):
-            break
-        end -= 1
-    return min_col, end
+    weight_col = _find_weight_col(ws, month_row, min_col, max_col)
+    # Colored category bars sit immediately left of WEIGHT; columns further left
+    # are the duplicate percentage rail (and red border) — skip them.
+    if weight_col is not None and weight_col > min_col:
+        start = weight_col - 1
+    else:
+        start = (
+            _find_category_bar_col(
+                ws,
+                min_col,
+                max_col,
+                body_start or ((month_row + 1) if month_row else min_col),
+                weight_col=weight_col,
+            )
+            or min_col
+        )
+
+    if end == max_col:
+        sample_rows = list(range(1, min(40, int(ws.max_row or 40)) + 1))
+        while end > start:
+            if any(_cell_text(ws.cell(r, end)) or _fill_rgb(ws.cell(r, end)) for r in sample_rows):
+                break
+            end -= 1
+    return start, end
+
+
+def _is_month_footer_row(ws: Worksheet, row: int, min_col: int, max_col: int) -> bool:
+    """True for the repeating JAN..DEC footer row under Operations (not a real KPI row)."""
+    month_hits = 0
+    other = 0
+    for col in range(min_col, max_col + 1):
+        text = _cell_text(ws.cell(row, col))
+        if not text:
+            continue
+        token = _normalize_month_token(text)
+        if token in MONTH_HEADER_TOKENS or token[:3] in MONTH_HEADER_TOKENS:
+            month_hits += 1
+        else:
+            other += 1
+    return month_hits >= 6 and other == 0
+
+
+def _is_opportunities_row(ws: Worksheet, row: int, min_col: int, max_col: int) -> bool:
+    """True for the gray OPPORTUNITIES footer under Overall Total Score."""
+    for col in range(min_col, max_col + 1):
+        text = _cell_text(ws.cell(row, col)).casefold()
+        if not text:
+            continue
+        if text.startswith("opportunit") or "opportunities:" in text or text.startswith("count of"):
+            return True
+    return False
+
+
+def _trim_capture_end_row(
+    ws: Worksheet,
+    start_row: int,
+    end_row: int,
+    min_col: int,
+    max_col: int,
+) -> int:
+    """Drop trailing month-footer / OPPORTUNITIES rows from the capture."""
+    end = end_row
+    while end > start_row:
+        if _is_month_footer_row(ws, end, min_col, max_col) or _is_opportunities_row(
+            ws, end, min_col, max_col
+        ):
+            end -= 1
+            continue
+        break
+    return end
 
 
 def _find_month_header_row(ws: Worksheet, min_row: int, max_row: int, min_col: int, max_col: int) -> int | None:
@@ -851,6 +961,12 @@ def detect_system_layout(
         end = max(end, next_start - 1)
         while end > start and not _row_has_content(ws, end, min_col, max_col):
             end -= 1
+        # Drop duplicate month footer / OPPORTUNITIES footer rows.
+        while end > start and (
+            _is_month_footer_row(ws, end, min_col, max_col)
+            or _is_opportunities_row(ws, end, min_col, max_col)
+        ):
+            end -= 1
         # Mark trailing dark totals block as black when fill says so.
         if not is_black:
             for col in _left_label_columns(min_col, max_col):
@@ -866,8 +982,14 @@ def detect_system_layout(
         header_start = min_row
         header_end = max(min_row, first_section_row - 1)
 
-    # Trim trailing empty / merge-inflated columns so the screenshot isn't mostly white.
-    content_min, content_max = _scorecard_content_cols(ws, month_row, min_col, max_col)
+    # Start at colored category bars (skip duplicate % rail); end at YE.
+    content_min, content_max = _scorecard_content_cols(
+        ws,
+        month_row,
+        min_col,
+        max_col,
+        body_start=first_section_row,
+    )
 
     sections = [
         Section(
@@ -1572,6 +1694,16 @@ def capture_sections_png(
     body_start = min(s.start_row for s in ordered)
     body_end = max(s.end_row for s in ordered)
 
+    # Final trim against the live sheet (month footer / OPPORTUNITIES).
+    try:
+        wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
+        match = _find_sheet_name(list(wb.sheetnames), sheet_name) or sheet_name
+        ws = wb[match]
+        body_end = _trim_capture_end_row(ws, body_start, body_end, start_col, end_col)
+        wb.close()
+    except Exception as exc:
+        logger.debug("Could not trim System capture end row: %s", exc)
+
     if prefer_excel_com:
         try:
             with tempfile.TemporaryDirectory(prefix="mpr_system_") as tmp:
@@ -1623,13 +1755,22 @@ def place_picture_on_slide(
     max_width: int = DEFAULT_WIDTH,
     max_height: int = DEFAULT_HEIGHT,
     fit: str = "fill",
+    grow: float = 1.0,
 ) -> None:
     """Place a PNG into the content area.
 
     fit=fill  -> stretch exactly into the box (matches template picture slots)
     fit=contain -> preserve aspect ratio inside the box
+    grow -> expand the target box slightly (e.g. 1.08) so the scorecard reads larger
     """
     from pptx.util import Emu
+
+    if grow and grow != 1.0:
+        new_w = int(max_width * grow)
+        new_h = int(max_height * grow)
+        left = int(left) - (new_w - int(max_width)) // 2
+        top = int(top) - (new_h - int(max_height)) // 2
+        max_width, max_height = new_w, new_h
 
     with Image.open(io.BytesIO(png_bytes)) as img:
         img_w, img_h = img.size
@@ -1773,6 +1914,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     prefer_com = bool(element.get("prefer_excel_com", True))
     replace_existing = bool(element.get("replace_existing_pictures", True))
     fit = str(element.get("fit", "fill")).lower()
+    grow = float(element.get("grow", 1.0) or 1.0)
     mode = str(element.get("sections", element.get("capture", "auto"))).lower()
 
     try:
@@ -1922,9 +2064,10 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         max_width=width,
         max_height=height,
         fit=fit,
+        grow=grow,
     )
     logger.info(
-        "Placed scorecard image from %s!%s box=(%s,%s,%s,%s) fit=%s",
+        "Placed scorecard image from %s!%s box=(%s,%s,%s,%s) fit=%s grow=%s",
         workbook,
         sheet_name,
         left,
@@ -1932,6 +2075,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         width,
         height,
         fit,
+        grow,
     )
     print(f">>> Placed live image on slide from {workbook}/{sheet_name}")
     return True

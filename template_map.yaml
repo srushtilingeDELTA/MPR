@@ -32,11 +32,12 @@ slides:
           - "Operations"
         fallback_indices: [0, 1, 2]
         replace_existing_pictures: true
-        fit: contain
+        fit: fill
+        grow: 1.06
         optional: false
 
   # PPT 4 — System Scorecard from same System tab
-  # People + Finance + Overall and Opportunities
+  # People + Finance + Overall Total Score (no OPPORTUNITIES footer)
   - index: 3
     name: scorecard_summary_2
     keep_title: true
@@ -54,7 +55,8 @@ slides:
           - "Opportunities"
         fallback_indices: [3, 4, 5]
         replace_existing_pictures: true
-        fit: contain
+        fit: fill
+        grow: 1.06
         optional: false
 
   # PPT 5 — GIR (live tables + chart from actuals)
