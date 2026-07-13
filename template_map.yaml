@@ -37,6 +37,7 @@ slides:
           - "Safety & Security"
           - "Customer Experience"
           - "Operations"
+        fallback_indices: [0, 1, 2]
         optional: false
 
   - index: 3
@@ -49,11 +50,12 @@ slides:
         sheet: System
         sections: match
         match:
+          - "People"
           - "Finance"
           - "Financial"
-          - "People"
           - "Overall"
           - "Opportunities"
+        fallback_indices: [3, 4, 5]
         optional: false
 
   - index: 4

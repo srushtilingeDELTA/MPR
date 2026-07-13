@@ -107,28 +107,41 @@ MONTH_HEADER_TOKENS = {
     "DECEMBER",
 }
 
-# Live GSE System tab category labels (vertical bars on the left).
-CATEGORY_KEYWORDS = (
-    "safety",
-    "security",
-    "customer",
-    "experience",
-    "operations",
-    "people",
-    "finance",
-    "financial",
-    "quality",
-    "reliability",
-    "maintenance",
-    "cost",
+# Ordered System tab categories used when left-rail labels are shapes/images
+# (openpyxl cannot always read those cells, but TOTAL SCORE rows still mark boundaries).
+DEFAULT_SYSTEM_CATEGORIES = [
+    "Safety & Security",
+    "Customer Experience",
+    "Operations",
+    "People",
+    "Finance",
+    "Overall and Opportunities",
+]
+
+# KPI names that must NEVER be treated as category section titles.
+KNOWN_KPI_NAMES = {
     "budget",
-    "total",
-    "overall",
-    "opportunities",
-    "opportunity",
-    "summary",
-    "scorecard",
-)
+    "total hours",
+    "hours",
+    "ot",
+    "psych. safety",
+    "psych safety",
+    "psychological safety",
+    "global injury rate",
+    "gir",
+    "ea compliance",
+    "asap",
+    "in-service rate",
+    "vos (stationary)",
+    "vos",
+    "pmi",
+    "critical jam",
+    "clear time",
+    "mbr",
+    "engagement",
+    "retention",
+    "training",
+}
 
 METRIC_LABELS = {
     "plan",
@@ -140,6 +153,18 @@ METRIC_LABELS = {
     "kpi",
     "total score",
 }
+
+CATEGORY_KEYWORDS = (
+    "safety & security",
+    "customer experience",
+    "operations",
+    "people",
+    "finance",
+    "financial",
+    "overall",
+    "opportunities",
+    "opportunity",
+)
 
 
 def _theme_rgb(theme: int | None, tint: float | None = None) -> tuple[int, int, int] | None:
@@ -283,39 +308,69 @@ def _find_month_header_row(ws: Worksheet, min_row: int, max_row: int, min_col: i
 
 
 def _header_band(ws: Worksheet, month_row: int, min_col: int, max_col: int, first_section_row: int) -> tuple[int, int]:
-    """Include month labels plus any WEIGHT/KPI label rows above the first category."""
+    """Include only the month header row (and an immediate label row), not the whole body."""
     start = month_row
-    # Pull in a title/spacer row immediately above months if present.
     if month_row > 1 and _row_has_content(ws, month_row - 1, min_col, max_col):
+        # Keep a short title row above months, but never more than 1 row.
         start = month_row - 1
-    end = max(month_row, first_section_row - 1)
-    # Keep WEIGHT / KPI / TOTAL SCORE row(s) that sit between months and the first KPI body.
-    for row in range(month_row, first_section_row):
-        texts = " ".join(_cell_text(ws.cell(row, c)).casefold() for c in range(min_col, max_col + 1))
-        if "weight" in texts or "kpi" in texts or "total score" in texts:
-            end = max(end, row)
-    return start, max(start, end)
+    end = month_row
+    # At most one WEIGHT/KPI label row directly under the months.
+    probe = month_row + 1
+    if probe < first_section_row:
+        texts = " ".join(_cell_text(ws.cell(probe, c)).casefold() for c in range(min_col, min(min_col + 8, max_col + 1)))
+        if "weight" in texts or texts.strip() == "kpi" or "total score" in texts:
+            end = probe
+    return start, end
 
 
 def _is_category_title(text: str) -> bool:
     if not text or len(text) > 80:
         return False
     lower = text.casefold().strip()
-    if lower in METRIC_LABELS:
+    if lower in METRIC_LABELS or lower in KNOWN_KPI_NAMES:
+        return False
+    # Avoid matching bare "safety" inside KPI names like "Psych. Safety".
+    if lower.startswith("psych"):
         return False
     token = _normalize_month_token(text)
     if token in MONTH_HEADER_TOKENS or token[:3] in MONTH_HEADER_TOKENS:
         return False
-    if any(k in lower for k in CATEGORY_KEYWORDS):
-        return True
-    # e.g. "Safety & Security (25.0%)"
     if "(" in text and "%" in text:
+        return True
+    if any(k in lower for k in CATEGORY_KEYWORDS):
         return True
     return False
 
 
 def _left_label_columns(min_col: int, max_col: int) -> range:
-    return range(min_col, min(min_col + 5, max_col + 1))
+    # Real category rail is the far-left columns only (not the KPI name column).
+    return range(min_col, min(min_col + 2, max_col + 1))
+
+
+def _assign_default_titles(
+    sections: list[tuple[int, int, str, bool]],
+) -> list[tuple[int, int, str, bool]]:
+    """Fill missing/generic titles using the known System category order."""
+    out: list[tuple[int, int, str, bool]] = []
+    for idx, (start, end, title, is_black) in enumerate(sections):
+        cleaned = title.strip()
+        generic = (
+            not cleaned
+            or cleaned.casefold().startswith("section ")
+            or cleaned.casefold() in {"system", "system scorecard", "total score"}
+        )
+        if generic and idx < len(DEFAULT_SYSTEM_CATEGORIES):
+            cleaned = DEFAULT_SYSTEM_CATEGORIES[idx]
+        elif generic:
+            cleaned = f"Section {idx + 1}"
+        if idx == len(sections) - 1 and (
+            is_black or "overall" in cleaned.casefold() or "opportunit" in cleaned.casefold()
+        ):
+            is_black = True
+            if "overall" not in cleaned.casefold():
+                cleaned = DEFAULT_SYSTEM_CATEGORIES[-1]
+        out.append((start, end, cleaned, is_black))
+    return out
 
 
 def _vertical_category_merges(
@@ -357,33 +412,6 @@ def _vertical_category_merges(
     return found
 
 
-def _category_title_rows(
-    ws: Worksheet,
-    min_row: int,
-    max_row: int,
-    min_col: int,
-    max_col: int,
-) -> list[tuple[int, int, str, bool]]:
-    """Find category labels by text in the left columns (A-E)."""
-    found: list[tuple[int, int, str, bool]] = []
-    seen_rows: set[int] = set()
-    for row in range(min_row, max_row + 1):
-        for col in _left_label_columns(min_col, max_col):
-            text = _cell_text(ws.cell(row, col))
-            if not _is_category_title(text):
-                continue
-            # Avoid treating a sheet title row as a category.
-            if text.strip().casefold() in {"system", "system scorecard"}:
-                continue
-            if row in seen_rows:
-                continue
-            rgb = _fill_rgb(ws.cell(row, col))
-            found.append((row, row, text, _is_dark(rgb)))
-            seen_rows.add(row)
-            break
-    return found
-
-
 def _total_score_section_starts(
     ws: Worksheet,
     min_row: int,
@@ -392,42 +420,71 @@ def _total_score_section_starts(
     max_col: int,
 ) -> list[tuple[int, int, str, bool]]:
     """
-    Each category block in the live file starts with a grey TOTAL SCORE row.
-    Use those rows as section boundaries and pull a title from the left label.
+    Each category block in the live System tab starts with a grey TOTAL SCORE row.
+    Use those rows as section boundaries.
     """
-    starts: list[tuple[int, int, str, bool]] = []
+    starts: list[int] = []
     for row in range(min_row, max_row + 1):
-        has_total = False
-        for col in range(min_col, min(min_col + 8, max_col + 1)):
-            if _cell_text(ws.cell(row, col)).casefold() == "total score":
-                has_total = True
+        for col in range(min_col, min(min_col + 10, max_col + 1)):
+            if "total score" in _cell_text(ws.cell(row, col)).casefold():
+                starts.append(row)
                 break
-        if not has_total:
-            continue
-        title = f"Section {len(starts) + 1}"
+    if len(starts) < 2:
+        return []
+
+    sections: list[tuple[int, int, str, bool]] = []
+    for idx, start in enumerate(starts):
+        end = starts[idx + 1] - 1 if idx + 1 < len(starts) else max_row
+        title = ""
         is_black = False
+        # Prefer far-left rail text/fill (category bar), not KPI column text.
+        for row in range(start, min(start + 8, end + 1)):
+            for col in _left_label_columns(min_col, max_col):
+                cell = ws.cell(row, col)
+                text = _cell_text(cell)
+                rgb = _fill_rgb(cell)
+                if rgb is not None and _is_dark(rgb):
+                    is_black = True
+                if text and _is_category_title(text):
+                    title = text
+                    break
+            if title:
+                break
+        if not title and idx < len(DEFAULT_SYSTEM_CATEGORIES):
+            title = DEFAULT_SYSTEM_CATEGORIES[idx]
+        elif not title:
+            title = f"Section {idx + 1}"
+        sections.append((start, end, title, is_black))
+    return _assign_default_titles(sections)
+
+
+def _category_title_rows(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    """Find category labels by text in the far-left rail only."""
+    found: list[tuple[int, int, str, bool]] = []
+    seen_rows: set[int] = set()
+    for row in range(min_row, max_row + 1):
         for col in _left_label_columns(min_col, max_col):
-            cell = ws.cell(row, col)
-            text = _cell_text(cell)
-            rgb = _fill_rgb(cell)
-            if text and _is_category_title(text):
-                title = text
-            if rgb is not None:
-                is_black = is_black or _is_dark(rgb)
-            # Look a few rows down for the vertical label text if this row only has TOTAL SCORE.
-            if title.startswith("Section"):
-                for look in range(row, min(row + 6, max_row + 1)):
-                    look_text = _cell_text(ws.cell(look, col))
-                    if _is_category_title(look_text) and look_text.strip().casefold() not in {
-                        "system",
-                        "system scorecard",
-                    }:
-                        title = look_text
-                        rgb2 = _fill_rgb(ws.cell(look, col))
-                        is_black = is_black or _is_dark(rgb2)
-                        break
-        starts.append((row, row, title, is_black))
-    return starts
+            text = _cell_text(ws.cell(row, col))
+            if not _is_category_title(text):
+                continue
+            if text.strip().casefold() in {"system", "system scorecard"}:
+                continue
+            if row in seen_rows:
+                continue
+            rgb = _fill_rgb(ws.cell(row, col))
+            # Require a filled rail cell so KPI text in nearby columns is ignored.
+            if rgb is None:
+                continue
+            found.append((row, row, text, _is_dark(rgb)))
+            seen_rows.add(row)
+            break
+    return _assign_default_titles(found) if found else []
 
 
 def _fill_run_sections(
@@ -507,17 +564,17 @@ def _choose_raw_sections(
     min_col: int,
     max_col: int,
 ) -> list[tuple[int, int, str, bool]]:
-    """Try several strategies; keep the first that finds 2+ real categories."""
+    """Try several strategies; prefer TOTAL SCORE boundaries for the live workbook."""
     candidates = [
-        ("vertical merges", _vertical_category_merges(ws, min_row, max_row, min_col, max_col)),
-        ("category titles", _category_title_rows(ws, min_row, max_row, min_col, max_col)),
         ("TOTAL SCORE rows", _total_score_section_starts(ws, min_row, max_row, min_col, max_col)),
+        ("vertical merges", _vertical_category_merges(ws, min_row, max_row, min_col, max_col)),
         ("left fill runs", _fill_run_sections(ws, min_row, max_row, min_col, max_col)),
+        ("category titles", _category_title_rows(ws, min_row, max_row, min_col, max_col)),
     ]
     for name, found in candidates:
-        if len(found) >= 2:
+        if len(found) >= 3:
             logger.info("System section strategy=%s count=%s", name, len(found))
-            return found
+            return _assign_default_titles(found)
         logger.info("System section strategy=%s count=%s (skip)", name, len(found))
     return []
 
@@ -622,10 +679,15 @@ def select_sections_for_slide(
     count: int = 3,
     include_black: bool = False,
     match: list[str] | None = None,
+    indices: list[int] | None = None,
 ) -> list[Section]:
     """Choose which sections belong on a System Scorecard slide."""
     if not sections:
         return []
+
+    if mode == "indices":
+        chosen = [sections[i] for i in (indices or []) if 0 <= i < len(sections)]
+        return sorted({s.index: s for s in chosen}.values(), key=lambda s: s.start_row)
 
     if mode == "match":
         patterns = [p.strip() for p in (match or []) if str(p).strip()]
@@ -642,18 +704,18 @@ def select_sections_for_slide(
                     chosen.append(section)
                     used.add(section.index)
                     break
-        # De-dupe while keeping sheet order
         chosen = sorted({s.index: s for s in chosen}.values(), key=lambda s: s.start_row)
+        if not chosen and indices:
+            logger.warning(
+                "Name match failed for %s; falling back to indices %s (available=%s)",
+                patterns,
+                indices,
+                [s.title for s in sections],
+            )
+            return select_sections_for_slide(sections, mode="indices", indices=indices)
         if not chosen:
             logger.warning(
                 "No System sections matched %s. Available: %s",
-                patterns,
-                [s.title for s in sections],
-            )
-        elif len(chosen) < len(set(p.casefold() for p in patterns)):
-            logger.info(
-                "Matched System sections %s for patterns %s (available=%s)",
-                [s.title for s in chosen],
                 patterns,
                 [s.title for s in sections],
             )
@@ -956,6 +1018,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     count = int(element.get("count", 3))
     include_black = bool(element.get("include_black", False))
     match = element.get("match") or []
+    fallback_indices = element.get("fallback_indices") or element.get("indices") or []
     prefer_com = bool(element.get("prefer_excel_com", True))
 
     try:
@@ -976,6 +1039,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         count=count,
         include_black=include_black,
         match=list(match) if match else None,
+        indices=[int(i) for i in fallback_indices] if fallback_indices else None,
     )
     if not chosen:
         logger.warning(
