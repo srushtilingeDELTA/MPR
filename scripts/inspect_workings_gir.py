@@ -61,9 +61,10 @@ def main() -> int:
             if shown >= 40:
                 break
     wb.close()
-    print("\nSlide 5 maps GIR dashboard panels (chart/summary/injury/recordable/metric)")
-    print("into the template slots and clears Leading Issues / Action Plan text.")
-    print("Raw ALL / NO 115 dumps are excluded.")
+    print("\nSlide 5 fills native PowerPoint tables/chart from Actuals.")
+    print("Injury Breakdown may be filled from Workings!GIR when that table parses cleanly.")
+    print("Leading Issues / Action Plan text boxes are cleared for manual entry.")
+    print("Screenshots are not used for GIR.")
     return 0
 
 

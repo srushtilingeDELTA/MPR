@@ -59,27 +59,23 @@ slides:
         grow: 1.06
         optional: false
 
-  # PPT 5 — GIR from New GSE MPR Workings.xlsx → GIR tab
-  # Multiple panel screenshots mapped into template slots (not the raw ALL/NO 115 dumps).
+  # PPT 5 — GIR: fill native template chart + tables from Actuals (no screenshots).
+  # Injury Breakdown is filled from Workings!GIR when that table can be read cleanly.
   # Leading Issues / Action Plan body text cleared to empty editable boxes.
   - index: 4
     name: gir
     keep_title: true
     elements:
-      - type: gir_workings_panels
-        workbook: workings
-        sheet: "GIR"
-        sheet_match: ["GIR"]
-        clear_narrative: true
-        fit: fill
-        optional: false
-        # Optional explicit Excel ranges if auto-detect misses a block:
-        # ranges:
-        #   chart: "A1:G20"
-        #   summary: "H1:J12"
-        #   injury: "K1:P18"
-        #   recordable: "A22:N25"
-        #   metric: "A27:N32"
+      - type: gir_tables
+        workbook: actuals
+        kpis:
+          gir: GIR
+          injury_count: "Injury Count"
+      - type: gir_charts
+        workbook: actuals
+        kpi: GIR
+      - type: clear_narrative
+        # Empty Leading Issues / Action Plan body text boxes (headers kept)
 
   # PPT 6 — EA Compliance / ASAP (template picture → live screenshot when sheet exists)
   - index: 5

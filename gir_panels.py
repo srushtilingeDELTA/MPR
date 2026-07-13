@@ -479,6 +479,75 @@ def clear_leading_action_narrative(slide) -> int:
     return cleared
 
 
+def read_injury_breakdown_rows(data) -> list[list[str]] | None:
+    """Read Injury Breakdown values from Workings!GIR for native PPT table fill.
+
+    Returns data rows only (no title/header), or None when unavailable/ambiguous.
+    """
+    try:
+        workbook_bytes = data.store.workbook_bytes("workings")
+    except Exception as exc:
+        logger.info("Workings workbook unavailable for Injury Breakdown: %s", exc)
+        return None
+
+    try:
+        sheet_name = resolve_sheet_name(
+            workbook_bytes,
+            sheet="GIR",
+            sheet_match=["GIR"],
+            sheet_match_index=0,
+            available=data.sheet_names("workings") or None,
+        )
+    except Exception as exc:
+        logger.info("GIR sheet resolve failed for Injury Breakdown: %s", exc)
+        return None
+
+    try:
+        blocks = discover_gir_blocks(workbook_bytes, sheet_name)
+    except Exception as exc:
+        logger.info("GIR block discovery failed: %s", exc)
+        return None
+
+    block = blocks.get("injury")
+    if not block:
+        return None
+
+    wb = load_workbook(io.BytesIO(workbook_bytes), data_only=True)
+    try:
+        match = _find_sheet_name(list(wb.sheetnames), sheet_name) or sheet_name
+        ws = wb[match]
+        grid: list[list[str]] = []
+        for row in range(block.start_row, block.end_row + 1):
+            values = []
+            for col in range(block.start_col, block.end_col + 1):
+                raw = ws.cell(row, col).value
+                if raw is None:
+                    values.append("")
+                elif isinstance(raw, float) and raw.is_integer():
+                    values.append(str(int(raw)))
+                else:
+                    values.append(str(raw).strip())
+            if any(v for v in values):
+                grid.append(values)
+    finally:
+        wb.close()
+
+    if len(grid) < 3:
+        return None
+
+    # Drop title row and header row when present.
+    start = 0
+    if any("injur" in c.casefold() for c in grid[0]):
+        start = 1
+    if start < len(grid) and any(h in " ".join(grid[start]).casefold() for h in ("year", "total", "rec", "dart")):
+        start += 1
+    rows = grid[start:]
+    if not rows:
+        return None
+    logger.info("Parsed %s Injury Breakdown data row(s) from workings/%s", len(rows), sheet_name)
+    return rows
+
+
 def clear_gir_narrative_textboxes(slide) -> int:
     """Backward-compatible alias for GIR slide narrative clearing."""
     return clear_leading_action_narrative(slide)

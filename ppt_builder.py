@@ -420,6 +420,7 @@ def _fill_table_from_dataframe(table, df, *, header_rows: int = 1) -> bool:
 
 
 def update_gir_tables(slide, data: MprData, config: dict, workbook: str) -> None:
+    """Fill native GIR template tables from Actuals (and Injury Breakdown from Workings when clean)."""
     kpi = config.get("kpi_mappings", {})
     gir_name = kpi.get("gir", "GIR")
     injury_name = kpi.get("injury_count", "Injury Count")
@@ -430,6 +431,16 @@ def update_gir_tables(slide, data: MprData, config: dict, workbook: str) -> None
     injury_mtd = data.kpi_value([injury_name], month=data.month, workbook=workbook)
     injury_monthly = data.monthly_series([injury_name], through_month=data.month, workbook=workbook)
     injury_ytd = data.ytd_value([injury_name], workbook=workbook)
+    yo1 = data.kpi_value([gir_name], month=data.month, workbook=workbook, year=data.year - 1)
+    yo2 = data.kpi_value([gir_name], month=data.month, workbook=workbook, year=data.year - 2)
+
+    injury_rows = None
+    try:
+        from gir_panels import read_injury_breakdown_rows
+
+        injury_rows = read_injury_breakdown_rows(data)
+    except Exception as exc:
+        logger.info("GIR Injury Breakdown from workings unavailable: %s", exc)
 
     for shape in slide.shapes:
         if not shape.has_table:
@@ -445,24 +456,62 @@ def update_gir_tables(slide, data: MprData, config: dict, workbook: str) -> None
             set_cell_text_preserve(table.cell(2, 5), _fmt(mtd.goal))
             set_cell_text_preserve(table.cell(2, 6), _fmt_diff(ytd_actual, mtd.goal))
 
+        if "injury breakdown" in label and injury_rows:
+            _fill_gir_injury_breakdown_table(table, injury_rows)
+
         if "actual:" in table.cell(1, 0).text.lower() or data.report_month_short().lower() in table.cell(0, 0).text.lower():
             set_cell_text_preserve(table.cell(0, 0), data.report_month_short())
             set_cell_text_preserve(table.cell(1, 1), _fmt(mtd.actual))
-            set_cell_text_preserve(table.cell(2, 1), _fmt(mtd.goal))
+            if len(table.rows) > 2:
+                set_cell_text_preserve(table.cell(2, 1), _fmt(mtd.goal))
+            for row_idx in range(len(table.rows)):
+                left = table.cell(row_idx, 0).text.strip().casefold()
+                if left.startswith("yo1y") and _safe_number(yo1.actual) is not None:
+                    set_cell_text_preserve(table.cell(row_idx, 1), _fmt(yo1.actual))
+                elif left.startswith("yo2y") and _safe_number(yo2.actual) is not None:
+                    set_cell_text_preserve(table.cell(row_idx, 1), _fmt(yo2.actual))
 
         if label == "recordable":
             for col_idx, month_num in enumerate(range(1, 13), start=1):
                 if month_num <= data.month:
                     set_cell_text_preserve(table.cell(1, col_idx), _fmt(monthly[month_num - 1]))
+                else:
+                    set_cell_text_preserve(table.cell(1, col_idx), "")
             set_cell_text_preserve(table.cell(1, 13), _fmt(ytd_actual))
             set_cell_text_preserve(table.cell(1, 14), _fmt_diff(ytd_actual, mtd.goal))
             if len(table.rows) > 2 and "injury" in table.cell(2, 0).text.lower():
                 for col_idx, month_num in enumerate(range(1, 13), start=1):
                     if month_num <= data.month and _safe_number(injury_monthly[month_num - 1]) is not None:
                         set_cell_text_preserve(table.cell(2, col_idx), _fmt(injury_monthly[month_num - 1], decimals=0))
+                    elif month_num > data.month:
+                        set_cell_text_preserve(table.cell(2, col_idx), "")
                 if _safe_number(injury_ytd) is not None:
                     set_cell_text_preserve(table.cell(2, 13), _fmt(injury_ytd, decimals=0))
+                else:
+                    set_cell_text_preserve(table.cell(2, 13), "")
 
+
+def _fill_gir_injury_breakdown_table(table, rows: list[list[str]]) -> bool:
+    """Write Injury Breakdown values into the existing template table without resizing it."""
+    if not rows:
+        return False
+    wrote = False
+    # Keep row 0 title / row 1 headers; write data from row 2 onward when shapes match.
+    start_row = 2 if len(table.rows) > 2 else 1
+    max_cols = len(table.columns)
+    for r_idx, row in enumerate(rows):
+        ppt_row = start_row + r_idx
+        if ppt_row >= len(table.rows):
+            break
+        for c_idx in range(min(max_cols, len(row))):
+            value = row[c_idx]
+            if value is None:
+                continue
+            set_cell_text_preserve(table.cell(ppt_row, c_idx), str(value))
+            wrote = True
+    if wrote:
+        logger.info("Filled GIR Injury Breakdown table (%s data row(s))", min(len(rows), len(table.rows) - start_row))
+    return wrote
 
 def update_gir_charts(slide, data: MprData, config: dict, workbook: str) -> None:
     gir_name = config.get("kpi_mappings", {}).get("gir", "GIR")
@@ -743,15 +792,18 @@ def _verify_output(prs: Presentation) -> None:
             except Exception as exc:
                 logger.warning("%s could not inspect image blob: %s", label, exc)
 
-    # GIR should show multiple panel pictures and no leftover template chart.
+    # GIR should keep native chart + tables (no stretched panel screenshots).
     gir = prs.slides[4]
     gir_charts = sum(1 for s in gir.shapes if getattr(s, "has_chart", False))
+    gir_tables = sum(1 for s in gir.shapes if getattr(s, "has_table", False))
     gir_pics = sum(1 for s in gir.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE)
-    print(f"VERIFY slide 5 GIR panels: {gir_pics} picture(s), {gir_charts} chart(s)")
-    if gir_pics < 2:
-        logger.warning("Slide 5 GIR expected multiple panel screenshots, found %s", gir_pics)
-    if gir_charts:
-        logger.warning("Slide 5 GIR still has %s template chart(s)", gir_charts)
+    print(f"VERIFY slide 5 GIR native: {gir_tables} table(s), {gir_charts} chart(s), {gir_pics} picture(s)")
+    if gir_tables < 3:
+        logger.warning("Slide 5 GIR expected native tables, found %s", gir_tables)
+    if gir_charts < 1:
+        logger.warning("Slide 5 GIR expected a native chart, found %s", gir_charts)
+    if gir_pics > 1:
+        logger.warning("Slide 5 GIR has unexpected pictures (%s) — prefer native fills", gir_pics)
     narrative_left = [
         (s.text_frame.text or "").strip()
         for s in gir.shapes
@@ -760,7 +812,8 @@ def _verify_output(prs: Presentation) -> None:
     leftover = [t for t in narrative_left if t]
     if leftover:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
-    # Slide 6 EA/ASAP narrative boxes should also be empty/editable text boxes.
+    else:
+        print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")    # Slide 6 EA/ASAP narrative boxes should also be empty/editable text boxes.
     ea = prs.slides[5]
     ea_textboxes = [
         s

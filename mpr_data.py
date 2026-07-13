@@ -129,7 +129,13 @@ class MprData:
                 return candidate
         return None
 
-    def _match_kpi_rows(self, df: pd.DataFrame, kpi_patterns: list[str], month: int | None = None) -> pd.DataFrame:
+    def _match_kpi_rows(
+        self,
+        df: pd.DataFrame,
+        kpi_patterns: list[str],
+        month: int | None = None,
+        year: int | None = None,
+    ) -> pd.DataFrame:
         if df.empty or self.cols["kpi"] not in df.columns:
             return df.iloc[0:0]
 
@@ -142,8 +148,9 @@ class MprData:
                 mask |= df[col].str.contains(pattern, case=False, na=False, regex=False)
         rows = df.loc[mask].copy()
         c = self.cols
+        year = self.year if year is None else year
         if c["year"] in rows.columns:
-            rows = rows.loc[rows[c["year"]] == self.year]
+            rows = rows.loc[rows[c["year"]] == year]
         if month and c["month"] in rows.columns:
             rows = rows.loc[rows[c["month"]] == month]
         return rows
@@ -191,6 +198,7 @@ class MprData:
         month: int | None = None,
         aggregation: str = "weighted",
         workbook: str | None = None,
+        year: int | None = None,
     ) -> KpiValue:
         month = month or self.month
         wb = workbook or self._actuals_workbook()
@@ -198,7 +206,7 @@ class MprData:
         if df.empty:
             return KpiValue()
 
-        rows = self._match_kpi_rows(df, kpi_patterns, month=month)
+        rows = self._match_kpi_rows(df, kpi_patterns, month=month, year=year)
         if rows.empty:
             return KpiValue()
 
