@@ -73,22 +73,27 @@ slides:
         clear_narrative: true
         optional: false
 
-  # PPT 6 — EA Compliance / ASAP (template picture → live screenshot when sheet exists)
+  # PPT 6 — EA Compliance / ASAP from New GSE MPR Workings.xlsx
+  # Screenshot EAC + ASAP tabs into the left content slot (replaces template OLE).
+  # Leading Issues / Action Plan body text cleared to empty editable boxes.
   - index: 5
     name: ea_asap
     keep_title: true
     elements:
-      - type: scorecard_screenshot
-        workbook: scorecards
-        sheet_match: ["EA", "ASAP", "Compliance"]
-        sections: sheet
-        replace_existing_pictures: true
-        fit: fill
-        optional: true
-      - type: clear_narrative
-        # Empty Leading Issues / Action Plan body text boxes (headers kept).
-        # Creates a clickable empty text box inside each border if one is missing.
-
+      - type: ea_asap_workings_panels
+        workbook: workings
+        fit: contain
+        clear_narrative: true
+        optional: false
+        panels:
+          - key: eac
+            sheet: "EAC"
+            sheet_match: ["EAC"]
+            label: "EAC"
+          - key: asap
+            sheet: "ASAP"
+            sheet_match: ["ASAP"]
+            label: "ASAP"
   # PPT 7 — People (live table + charts from actuals)
   - index: 6
     name: people

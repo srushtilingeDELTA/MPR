@@ -731,6 +731,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_gir_workings_native(slide, data, element) and not optional:
             logger.warning("No Workings GIR data for element %s", element)
+    elif etype == "ea_asap_workings_panels":
+        from ea_asap_panels import apply_ea_asap_workings_panels
+
+        if not apply_ea_asap_workings_panels(slide, data, element) and not optional:
+            logger.warning("No Workings EAC/ASAP panels for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
@@ -898,8 +903,23 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
     else:
         print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")
-    # Slide 6 EA/ASAP narrative boxes should also be empty/editable text boxes.
+    # Slide 6 EA/ASAP: Workings EAC+ASAP screenshots on the left; empty narrative boxes.
     ea = prs.slides[5]
+    ea_pics = [
+        s
+        for s in ea.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 6_000_000
+    ]
+    ea_ole = [
+        s
+        for s in ea.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT
+    ]
+    print(f"VERIFY slide 6 EA/ASAP content pictures: {len(ea_pics)} (OLE left: {len(ea_ole)})")
+    if len(ea_pics) < 1:
+        logger.warning("Slide 6 EA/ASAP expected EAC/ASAP screenshots, found %s pictures", len(ea_pics))
+    if ea_ole:
+        logger.warning("Slide 6 EA/ASAP still has %s embedded OLE object(s)", len(ea_ole))
     ea_textboxes = [
         s
         for s in ea.shapes
