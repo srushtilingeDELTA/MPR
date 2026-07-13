@@ -328,6 +328,9 @@ def clear_leading_action_narrative(slide) -> int:
     for shape in slide.shapes:
         if not getattr(shape, "has_text_frame", False):
             continue
+        # Only clear body text boxes — not red border rectangles.
+        if "textbox" not in (shape.name or "").casefold():
+            continue
         text = (shape.text_frame.text or "").strip()
         lower = text.casefold()
         if "leading issue" in lower or lower.startswith("action plan"):
