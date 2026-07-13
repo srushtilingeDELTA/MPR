@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import tempfile
 import time
 from dataclasses import dataclass
@@ -329,6 +330,32 @@ def _used_bounds(ws: Worksheet) -> tuple[int, int, int, int]:
 def _normalize_month_token(text: str) -> str:
     cleaned = "".join(ch for ch in text.upper() if ch.isalpha())
     return cleaned
+
+
+def _scorecard_content_cols(
+    ws: Worksheet,
+    month_row: int | None,
+    min_col: int,
+    max_col: int,
+) -> tuple[int, int]:
+    """Trim capture width to the KPI/month table (avoid huge empty trailing columns)."""
+    if month_row:
+        month_cols: list[int] = []
+        for col in range(min_col, max_col + 1):
+            token = _normalize_month_token(_cell_text(ws.cell(month_row, col)))
+            if token and (token in MONTH_HEADER_TOKENS or token[:3] in MONTH_HEADER_TOKENS):
+                month_cols.append(col)
+        if month_cols:
+            # Keep left label columns (category / WEIGHT / KPI) through YE.
+            return min_col, max(month_cols)
+
+    end = max_col
+    sample_rows = list(range(1, min(40, int(ws.max_row or 40)) + 1))
+    while end > min_col:
+        if any(_cell_text(ws.cell(r, end)) or _fill_rgb(ws.cell(r, end)) for r in sample_rows):
+            break
+        end -= 1
+    return min_col, end
 
 
 def _find_month_header_row(ws: Worksheet, min_row: int, max_row: int, min_col: int, max_col: int) -> int | None:
@@ -839,14 +866,17 @@ def detect_system_layout(
         header_start = min_row
         header_end = max(min_row, first_section_row - 1)
 
+    # Trim trailing empty / merge-inflated columns so the screenshot isn't mostly white.
+    content_min, content_max = _scorecard_content_cols(ws, month_row, min_col, max_col)
+
     sections = [
         Section(
             index=idx,
             title=title,
             start_row=start,
             end_row=end,
-            start_col=min_col,
-            end_col=max_col,
+            start_col=content_min,
+            end_col=content_max,
             is_black=is_black,
         )
         for idx, (start, end, title, is_black) in enumerate(normalized)
@@ -855,8 +885,8 @@ def detect_system_layout(
     layout = SystemLayout(
         header_start_row=header_start,
         header_end_row=header_end,
-        start_col=min_col,
-        end_col=max_col,
+        start_col=content_min,
+        end_col=content_max,
         sections=sections,
     )
     wb.close()
@@ -979,8 +1009,27 @@ def _range_address(start_row: int, end_row: int, start_col: int, end_col: int) -
     return f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"
 
 
+def _png_from_pil(img) -> bytes:
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGB")
+    elif img.mode == "RGBA":
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])
+        img = background
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=False)
+    return buf.getvalue()
+
+
+def _clipboard_image():
+    """Read an image from the Windows clipboard, if present."""
+    from PIL import ImageGrab
+
+    return ImageGrab.grabclipboard()
+
+
 def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str) -> bytes:
-    """True Excel screenshot via CopyPicture — matches template look when pywin32 is installed."""
+    """True Excel screenshot via CopyPicture (+ Chart.Export), matching template look."""
     try:
         import win32com.client  # type: ignore
     except ImportError as exc:
@@ -988,18 +1037,25 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
             "pywin32 is not installed. Run: pip install pywin32\n"
             "Then re-run main.py for template-quality System scorecard screenshots."
         ) from exc
-    from PIL import ImageGrab
 
     excel = None
     wb = None
+    chart_obj = None
     try:
         try:
             excel = win32com.client.gencache.EnsureDispatch("Excel.Application")
         except Exception:
             excel = win32com.client.DispatchEx("Excel.Application")
-        excel.Visible = False
+
+        # Hidden Excel often returns blank CopyPicture bitmaps. Keep it visible but minimized.
+        excel.Visible = True
         excel.DisplayAlerts = False
-        excel.ScreenUpdating = False
+        excel.ScreenUpdating = True
+        try:
+            excel.WindowState = -4140  # xlMinimized
+        except Exception:
+            pass
+
         wb = excel.Workbooks.Open(str(workbook_path.resolve()), ReadOnly=True, UpdateLinks=0)
         ws = None
         for sheet in wb.Worksheets:
@@ -1009,31 +1065,119 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
         if ws is None:
             raise ValueError(f"Worksheet {sheet_name!r} not found in Excel COM open")
         ws.Activate()
+
         try:
             excel.ActiveWindow.Zoom = 100
+            excel.ActiveWindow.DisplayGridlines = False
         except Exception:
             pass
+        try:
+            excel.CalculateUntilAsyncQueriesDone()
+        except Exception:
+            try:
+                excel.Calculate()
+            except Exception:
+                pass
+
         rng = ws.Range(range_addr)
-        rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
+        try:
+            rng.Select()
+            excel.ActiveWindow.ScrollRow = int(rng.Row)
+            excel.ActiveWindow.ScrollColumn = int(rng.Column)
+        except Exception:
+            pass
+
+        time.sleep(0.25)
+
+        # Preferred path: CopyPicture -> paste into a temp chart -> Export PNG (file-based).
+        # This is more reliable than ImageGrab when Edge/SharePoint is also using the clipboard.
+        export_path = Path(tempfile.gettempdir()) / f"mpr_scorecard_{os.getpid()}_{time.time_ns()}.png"
+        try:
+            width = max(float(rng.Width), 40.0)
+            height = max(float(rng.Height), 40.0)
+            # Keep chart size within Excel limits while preserving aspect.
+            max_side = 1200.0
+            scale = min(1.0, max_side / width, max_side / height)
+            chart_obj = ws.ChartObjects().Add(10, 10, width * scale, height * scale)
+            for appearance, fmt in ((1, 2), (2, 2), (1, -4147)):  # screen/printer bitmap/picture
+                try:
+                    rng.CopyPicture(Appearance=appearance, Format=fmt)
+                    time.sleep(0.2)
+                    chart_obj.Chart.Paste()
+                    time.sleep(0.2)
+                    if export_path.exists():
+                        export_path.unlink()
+                    chart_obj.Chart.Export(str(export_path))
+                    if export_path.exists() and export_path.stat().st_size > 1500:
+                        with Image.open(export_path) as img:
+                            png = _png_from_pil(img.convert("RGB"))
+                            logger.info(
+                                "Excel Chart.Export capture %s!%s -> %sx%s (%s bytes)",
+                                sheet_name,
+                                range_addr,
+                                img.width,
+                                img.height,
+                                len(png),
+                            )
+                            if img.width >= 200 and img.height >= 80:
+                                return png
+                except Exception as exc:
+                    logger.debug("Chart.Export attempt failed (%s/%s): %s", appearance, fmt, exc)
+        except Exception as exc:
+            logger.info("Chart.Export path unavailable (%s); falling back to clipboard", exc)
+        finally:
+            if chart_obj is not None:
+                try:
+                    chart_obj.Delete()
+                except Exception:
+                    pass
+                chart_obj = None
+            try:
+                if export_path.exists():
+                    export_path.unlink()
+            except Exception:
+                pass
+
+        # Fallback: direct clipboard grab.
         img = None
-        for _ in range(30):
-            time.sleep(0.2)
-            img = ImageGrab.grabclipboard()
+        for appearance, fmt in ((1, 2), (2, 2)):
+            try:
+                rng.CopyPicture(Appearance=appearance, Format=fmt)
+            except Exception:
+                continue
+            for _ in range(40):
+                time.sleep(0.15)
+                grabbed = _clipboard_image()
+                if grabbed is not None:
+                    img = grabbed
+                    break
             if img is not None:
                 break
         if img is None:
-            # Fallback: Copy then grab
-            rng.Copy()
-            time.sleep(0.5)
-            img = ImageGrab.grabclipboard()
-        if img is None:
             raise RuntimeError(f"Excel clipboard capture failed for {sheet_name}!{range_addr}")
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
+
+        png = _png_from_pil(img)
+        with Image.open(io.BytesIO(png)) as check:
+            logger.info(
+                "Excel clipboard capture %s!%s -> %sx%s (%s bytes)",
+                sheet_name,
+                range_addr,
+                check.width,
+                check.height,
+                len(png),
+            )
+            if check.width < 200 or check.height < 80:
+                raise RuntimeError(
+                    f"Excel capture too small for {sheet_name}!{range_addr}: "
+                    f"{check.width}x{check.height} ({len(png)} bytes)"
+                )
+        return png
     finally:
+        if chart_obj is not None:
+            try:
+                chart_obj.Delete()
+            except Exception:
+                pass
         try:
             if wb is not None:
                 wb.Close(SaveChanges=False)
@@ -1134,7 +1278,15 @@ def capture_range_png(
                 path = Path(tmp) / "scorecards.xlsx"
                 path.write_bytes(workbook_bytes)
                 png = _capture_via_excel_com(path, sheet_name, range_addr)
-                logger.info("Captured %s!%s via Excel COM (%s bytes)", sheet_name, range_addr, len(png))
+                with Image.open(io.BytesIO(png)) as img:
+                    logger.info(
+                        "Captured %s!%s via Excel COM (%s bytes, %sx%s)",
+                        sheet_name,
+                        range_addr,
+                        len(png),
+                        img.width,
+                        img.height,
+                    )
                 return png
         except Exception as exc:
             logger.warning(
@@ -1145,7 +1297,15 @@ def capture_range_png(
             )
 
     png = _capture_via_render(workbook_bytes, sheet_name, start_row, end_row, start_col, end_col)
-    logger.info("Rendered %s!%s via Pillow (%s bytes)", sheet_name, range_addr, len(png))
+    with Image.open(io.BytesIO(png)) as img:
+        logger.info(
+            "Rendered %s!%s via Pillow (%s bytes, %sx%s)",
+            sheet_name,
+            range_addr,
+            len(png),
+            img.width,
+            img.height,
+        )
     return png
 
 

@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 
 import yaml
+from PIL import Image
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
@@ -700,21 +701,24 @@ def _verify_output(prs: Presentation) -> None:
                 label,
             )
             continue
-        # Blob size catches the old tiny-header stitch failure (~400 bytes).
-        blob_sizes = []
+        # Blob size + pixel size catches blank/tiny COM captures.
         for pic in pics:
             try:
-                blob_sizes.append(len(pic.image.blob))
-            except Exception:
-                pass
-        if blob_sizes:
-            print(f"VERIFY {label} image bytes: {blob_sizes}")
-            if max(blob_sizes) < 5_000:
-                logger.error(
-                    "%s screenshot blob is too small (%s bytes) — capture looks empty",
-                    label,
-                    max(blob_sizes),
-                )
+                blob = pic.image.blob
+                with Image.open(io.BytesIO(blob)) as img:
+                    print(
+                        f"VERIFY {label} image: {len(blob)} bytes, {img.width}x{img.height}"
+                    )
+                    if len(blob) < 20_000 or img.width < 400 or img.height < 200:
+                        logger.error(
+                            "%s screenshot looks empty/low-quality (%s bytes, %sx%s)",
+                            label,
+                            len(blob),
+                            img.width,
+                            img.height,
+                        )
+            except Exception as exc:
+                logger.warning("%s could not inspect image blob: %s", label, exc)
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
