@@ -903,7 +903,7 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
     else:
         print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")
-    # Slide 6 EA/ASAP: Workings EAC+ASAP screenshots on the left; empty narrative boxes.
+    # Slide 6 EA/ASAP: one Workings screenshot on the left; empty narrative boxes.
     ea = prs.slides[5]
     ea_pics = [
         s
@@ -916,10 +916,21 @@ def _verify_output(prs: Presentation) -> None:
         if s.shape_type == MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT
     ]
     print(f"VERIFY slide 6 EA/ASAP content pictures: {len(ea_pics)} (OLE left: {len(ea_ole)})")
-    if len(ea_pics) < 1:
-        logger.warning("Slide 6 EA/ASAP expected EAC/ASAP screenshots, found %s pictures", len(ea_pics))
+    if len(ea_pics) != 1:
+        logger.warning(
+            "Slide 6 EA/ASAP expected exactly 1 content screenshot, found %s",
+            len(ea_pics),
+        )
     if ea_ole:
         logger.warning("Slide 6 EA/ASAP still has %s embedded OLE object(s)", len(ea_ole))
+    if ea_pics:
+        pic = ea_pics[0]
+        right = int(pic.left) + int(pic.width)
+        bottom = int(pic.top) + int(pic.height)
+        if right > 8_350_000:
+            logger.warning("Slide 6 EA/ASAP image may overlap Leading Issues (right=%s)", right)
+        if bottom > 6_300_000:
+            logger.warning("Slide 6 EA/ASAP image may overlap footer logo (bottom=%s)", bottom)
     ea_textboxes = [
         s
         for s in ea.shapes

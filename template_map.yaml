@@ -85,6 +85,7 @@ slides:
         fit: contain
         clear_narrative: true
         optional: false
+        # Capture each tab once, stitch into one image, place once (no duplicates).
         panels:
           - key: eac
             sheet: "EAC"
