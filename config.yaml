@@ -26,6 +26,7 @@ sharepoint:
   live_read: true
   upload_report: true
   upload_method: "auto"   # auto | rest | selenium
+  upload_rename_on_lock: true  # if file is locked (423), upload with a timestamped name
   upload_login_wait_seconds: 60
   upload_complete_wait_seconds: 90
   cache_to_disk: false

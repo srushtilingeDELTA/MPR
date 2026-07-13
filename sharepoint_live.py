@@ -409,6 +409,27 @@ def get_sharepoint_session(config: dict) -> tuple[requests.Session, dict]:
     return session, sp_cfg
 
 
+def _upload_headers(
+    session: requests.Session,
+    site_url: str,
+    *,
+    method: str = "POST",
+    bypass_lock: bool = False,
+) -> dict[str, str]:
+    digest = _request_digest(session, site_url)
+    headers = {
+        "Accept": "application/json;odata=verbose",
+        "Content-Type": "application/octet-stream",
+        "X-RequestDigest": digest,
+    }
+    if method == "PUT":
+        headers["IF-MATCH"] = "*"
+        headers["X-HTTP-Method"] = "PUT"
+    if bypass_lock:
+        headers["Prefer"] = "bypass-shared-lock"
+    return headers
+
+
 def _request_digest(session: requests.Session, site_url: str) -> str:
     """Fetch SharePoint form digest required for POST/PUT uploads."""
     response = session.post(
@@ -424,25 +445,17 @@ def _request_digest(session: requests.Session, site_url: str) -> str:
     return str(info["FormDigestValue"])
 
 
-def _upload_headers(session: requests.Session, site_url: str, *, method: str = "POST") -> dict[str, str]:
-    digest = _request_digest(session, site_url)
-    headers = {
-        "Accept": "application/json;odata=verbose",
-        "Content-Type": "application/octet-stream",
-        "X-RequestDigest": digest,
-    }
-    if method == "PUT":
-        headers["IF-MATCH"] = "*"
-        headers["X-HTTP-Method"] = "PUT"
-    return headers
-
-
 def _parse_upload_response(response: requests.Response, folder: str, file_name: str) -> str:
     if response.status_code in (401, 403):
         body = response.text[:500]
         raise PermissionError(
             f"SharePoint upload denied (HTTP {response.status_code}). "
             f"Response: {body}"
+        )
+    if response.status_code == 423:
+        body = response.text[:300]
+        raise RuntimeError(
+            f"423 Client Error: Locked for url while uploading {file_name}. {body}"
         )
     response.raise_for_status()
     try:
@@ -453,17 +466,62 @@ def _parse_upload_response(response: requests.Response, folder: str, file_name: 
     return server_url or f"{folder}/{file_name}"
 
 
+def _is_lock_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "423" in text or "locked" in text
+
+
+def _file_api_urls(site_url: str, folder: str, file_name: str) -> list[str]:
+    server_path = f"{folder.rstrip('/')}/{file_name}"
+    path_literal = server_path.replace("'", "''")
+    return [
+        f"{site_url.rstrip('/')}/_api/web/GetFileByServerRelativeUrl('{path_literal}')",
+        (
+            f"{site_url.rstrip('/')}/_api/web/GetFileByServerRelativePath("
+            f"decodedurl='{server_path}')"
+        ),
+    ]
+
+
+def _try_unlock_sharepoint_file(
+    session: requests.Session,
+    site_url: str,
+    folder: str,
+    file_name: str,
+) -> None:
+    """Best-effort unlock/check-in so overwrite can succeed after a 423 Locked error."""
+    digest = _request_digest(session, site_url)
+    headers = {
+        "Accept": "application/json;odata=verbose",
+        "X-RequestDigest": digest,
+    }
+    actions = ("undoCheckout", "checkin(comment='MPR auto unlock',checkintype=0)")
+    for base in _file_api_urls(site_url, folder, file_name):
+        for action in actions:
+            try:
+                response = session.post(f"{base}/{action}", headers=headers, timeout=60)
+                logger.info(
+                    "SharePoint unlock %s on %s -> HTTP %s",
+                    action,
+                    file_name,
+                    response.status_code,
+                )
+            except Exception as exc:
+                logger.debug("Unlock %s failed for %s: %s", action, file_name, exc)
+
+
 def _upload_via_add(
     session: requests.Session,
     site_url: str,
     folder: str,
     file_name: str,
     data: bytes,
+    *,
+    bypass_lock: bool = False,
 ) -> str:
     folder_literal = folder.replace("'", "''")
     file_literal = file_name.replace("'", "''")
-    headers = _upload_headers(session, site_url, method="POST")
-
+    headers = _upload_headers(session, site_url, method="POST", bypass_lock=bypass_lock)
     urls = [
         (
             f"{site_url.rstrip('/')}/_api/web/GetFolderByServerRelativeUrl('{folder_literal}')"
@@ -491,10 +549,12 @@ def _upload_via_put(
     folder: str,
     file_name: str,
     data: bytes,
+    *,
+    bypass_lock: bool = False,
 ) -> str:
     server_path = f"{folder.rstrip('/')}/{file_name}"
     path_literal = server_path.replace("'", "''")
-    headers = _upload_headers(session, site_url, method="PUT")
+    headers = _upload_headers(session, site_url, method="PUT", bypass_lock=bypass_lock)
     urls = [
         f"{site_url.rstrip('/')}/_api/web/GetFileByServerRelativeUrl('{path_literal}')/$value",
         (
@@ -513,6 +573,44 @@ def _upload_via_put(
     raise RuntimeError(f"SharePoint overwrite upload failed: {last_error}")
 
 
+def _rest_upload_with_lock_recovery(
+    session: requests.Session,
+    site_url: str,
+    folder: str,
+    file_name: str,
+    data: bytes,
+) -> str:
+    """Upload via REST; on 423 Locked, unlock/check-in, bypass lock, then retry."""
+    try:
+        return _upload_via_add(session, site_url, folder, file_name, data)
+    except Exception as add_exc:
+        logger.info("Add upload failed, trying overwrite: %s", add_exc)
+        try:
+            return _upload_via_put(session, site_url, folder, file_name, data)
+        except Exception as put_exc:
+            if not (_is_lock_error(add_exc) or _is_lock_error(put_exc)):
+                raise put_exc
+
+            logger.warning("SharePoint file appears locked; attempting unlock + retry")
+            _try_unlock_sharepoint_file(session, site_url, folder, file_name)
+            time.sleep(2)
+            try:
+                return _upload_via_add(
+                    session, site_url, folder, file_name, data, bypass_lock=True
+                )
+            except Exception:
+                return _upload_via_put(
+                    session, site_url, folder, file_name, data, bypass_lock=True
+                )
+
+
+def _alternate_upload_name(file_name: str) -> str:
+    stem = Path(file_name).stem
+    suffix = Path(file_name).suffix or ".pptx"
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return f"{stem} - uploaded {stamp}{suffix}"
+
+
 def upload_file_to_sharepoint(
     config: dict,
     file_name: str,
@@ -526,24 +624,41 @@ def upload_file_to_sharepoint(
     site_url = sp_cfg.get("site_url", "https://deltaairlines.sharepoint.com/sites/DL002488").rstrip("/")
     folder = folder_path or sp_cfg.get("server_folder_path", DEFAULT_SERVER_FOLDER)
     upload_mode = str(sp_cfg.get("upload_method", "auto")).lower()
+    rename_on_lock = bool(sp_cfg.get("upload_rename_on_lock", True))
 
     errors: list[str] = []
     session, _ = get_sharepoint_session(config)
 
     if upload_mode in ("auto", "rest"):
         try:
-            try:
-                server_path = _upload_via_add(session, site_url, folder, file_name, data)
-                logger.info("Uploaded %s to SharePoint (%s bytes)", file_name, len(data))
-                return server_path
-            except Exception as add_exc:
-                logger.info("Add upload failed, trying overwrite: %s", add_exc)
-                server_path = _upload_via_put(session, site_url, folder, file_name, data)
-                logger.info("Uploaded %s to SharePoint (%s bytes)", file_name, len(data))
-                return server_path
+            server_path = _rest_upload_with_lock_recovery(
+                session, site_url, folder, file_name, data
+            )
+            logger.info("Uploaded %s to SharePoint (%s bytes)", file_name, len(data))
+            return server_path
         except Exception as exc:
             errors.append(f"REST: {exc}")
             logger.warning("REST upload failed: %s", exc)
+            if rename_on_lock and _is_lock_error(exc):
+                alt_name = _alternate_upload_name(file_name)
+                try:
+                    server_path = _rest_upload_with_lock_recovery(
+                        session, site_url, folder, alt_name, data
+                    )
+                    logger.info(
+                        "Original file locked; uploaded as %s instead (%s bytes)",
+                        alt_name,
+                        len(data),
+                    )
+                    print(
+                        f"\nNote: '{file_name}' was locked in SharePoint.\n"
+                        f"Uploaded as: {alt_name}\n"
+                        "Close/unlock the original file in SharePoint if you want the normal name next time."
+                    )
+                    return server_path
+                except Exception as alt_exc:
+                    errors.append(f"REST alt-name: {alt_exc}")
+                    logger.warning("Alternate-name REST upload failed: %s", alt_exc)
 
     driver = config.get("_sharepoint_driver")
     if upload_mode in ("auto", "selenium") and local_path is not None:
@@ -556,6 +671,6 @@ def upload_file_to_sharepoint(
     raise PermissionError(
         "Could not upload report to SharePoint. "
         f"Attempts: {'; '.join(errors)}. "
-        "Try sharepoint.upload_method: selenium in config.yaml, "
+        "Close the PPTX if it is open in the browser/desktop, then re-run, "
         "or drag the file from output\\ into the SharePoint folder in Edge."
     )

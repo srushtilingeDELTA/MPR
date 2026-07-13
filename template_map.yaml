@@ -21,8 +21,9 @@ slides:
 
   # PowerPoint slides 3 and 4 (1-based) = indices 2 and 3
   # Source: 2026 - GSE Scorecards.xlsx → System tab
-  # Layout: month header (JAN..YE) + vertical category bars (Safety, Customer, Operations, ...)
-  # Slide 3 = first 3 categories; Slide 4 = last 2 categories + black/total section
+  # Exact categories requested for the deck:
+  #   Slide 3 = Safety & Security + Customer Experience + Operations
+  #   Slide 4 = Finance + People + Overall and Opportunities
   - index: 2
     name: scorecard_summary_1
     keep_title: true
@@ -31,9 +32,12 @@ slides:
       - type: scorecard_screenshot
         workbook: scorecards
         sheet: System
-        sections: first
-        count: 3
-        optional: true
+        sections: match
+        match:
+          - "Safety & Security"
+          - "Customer Experience"
+          - "Operations"
+        optional: false
 
   - index: 3
     name: scorecard_summary_2
@@ -43,10 +47,14 @@ slides:
       - type: scorecard_screenshot
         workbook: scorecards
         sheet: System
-        sections: last
-        count: 2
-        include_black: true
-        optional: true
+        sections: match
+        match:
+          - "Finance"
+          - "Financial"
+          - "People"
+          - "Overall"
+          - "Opportunities"
+        optional: false
 
   - index: 4
     name: gir

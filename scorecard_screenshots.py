@@ -124,6 +124,8 @@ CATEGORY_KEYWORDS = (
     "budget",
     "total",
     "overall",
+    "opportunities",
+    "opportunity",
     "summary",
     "scorecard",
 )
@@ -619,10 +621,43 @@ def select_sections_for_slide(
     mode: str,
     count: int = 3,
     include_black: bool = False,
+    match: list[str] | None = None,
 ) -> list[Section]:
     """Choose which sections belong on a System Scorecard slide."""
     if not sections:
         return []
+
+    if mode == "match":
+        patterns = [p.strip() for p in (match or []) if str(p).strip()]
+        if not patterns:
+            raise ValueError("sections: match requires a non-empty match list")
+        chosen: list[Section] = []
+        used: set[int] = set()
+        for pattern in patterns:
+            needle = pattern.casefold()
+            for section in sections:
+                if section.index in used:
+                    continue
+                if needle in section.title.casefold():
+                    chosen.append(section)
+                    used.add(section.index)
+                    break
+        # De-dupe while keeping sheet order
+        chosen = sorted({s.index: s for s in chosen}.values(), key=lambda s: s.start_row)
+        if not chosen:
+            logger.warning(
+                "No System sections matched %s. Available: %s",
+                patterns,
+                [s.title for s in sections],
+            )
+        elif len(chosen) < len(set(p.casefold() for p in patterns)):
+            logger.info(
+                "Matched System sections %s for patterns %s (available=%s)",
+                [s.title for s in chosen],
+                patterns,
+                [s.title for s in sections],
+            )
+        return chosen
 
     black = [s for s in sections if s.is_black]
     non_black = [s for s in sections if not s.is_black] or list(sections)
@@ -635,8 +670,6 @@ def select_sections_for_slide(
             for b in black:
                 if b not in chosen:
                     chosen.append(b)
-            # If no color-flagged black section, append the true last sheet section
-            # when it was excluded (often a dark totals strip).
             if not black and sections[-1] not in chosen:
                 chosen.append(sections[-1])
     else:
@@ -651,14 +684,26 @@ def _range_address(start_row: int, end_row: int, start_col: int, end_col: int) -
 
 
 def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str) -> bytes:
-    import win32com.client  # type: ignore
+    """True Excel screenshot via CopyPicture — matches template look when pywin32 is installed."""
+    try:
+        import win32com.client  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywin32 is not installed. Run: pip install pywin32\n"
+            "Then re-run main.py for template-quality System scorecard screenshots."
+        ) from exc
     from PIL import ImageGrab
 
-    excel = win32com.client.DispatchEx("Excel.Application")
-    excel.Visible = False
-    excel.DisplayAlerts = False
+    excel = None
     wb = None
     try:
+        try:
+            excel = win32com.client.gencache.EnsureDispatch("Excel.Application")
+        except Exception:
+            excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        excel.ScreenUpdating = False
         wb = excel.Workbooks.Open(str(workbook_path.resolve()), ReadOnly=True, UpdateLinks=0)
         ws = None
         for sheet in wb.Worksheets:
@@ -667,15 +712,24 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
                 break
         if ws is None:
             raise ValueError(f"Worksheet {sheet_name!r} not found in Excel COM open")
+        ws.Activate()
+        try:
+            excel.ActiveWindow.Zoom = 100
+        except Exception:
+            pass
         rng = ws.Range(range_addr)
-        # Appearance=1 (xlScreen), Format=2 (xlBitmap)
-        rng.CopyPicture(Appearance=1, Format=2)
+        rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
         img = None
-        for _ in range(20):
-            time.sleep(0.15)
+        for _ in range(30):
+            time.sleep(0.2)
             img = ImageGrab.grabclipboard()
             if img is not None:
                 break
+        if img is None:
+            # Fallback: Copy then grab
+            rng.Copy()
+            time.sleep(0.5)
+            img = ImageGrab.grabclipboard()
         if img is None:
             raise RuntimeError(f"Excel clipboard capture failed for {sheet_name}!{range_addr}")
         if img.mode not in ("RGB", "RGBA"):
@@ -684,9 +738,16 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
         img.save(buf, format="PNG")
         return buf.getvalue()
     finally:
-        if wb is not None:
-            wb.Close(SaveChanges=False)
-        excel.Quit()
+        try:
+            if wb is not None:
+                wb.Close(SaveChanges=False)
+        except Exception:
+            pass
+        try:
+            if excel is not None:
+                excel.Quit()
+        except Exception:
+            pass
 
 
 def _font(size: int = 12):
@@ -792,17 +853,28 @@ def capture_range_png(
     return png
 
 
-def _stitch_vertical(top_png: bytes, bottom_png: bytes) -> bytes:
-    """Stack two PNGs so slide 4 keeps the month header without earlier sections."""
-    top = Image.open(io.BytesIO(top_png)).convert("RGB")
-    bottom = Image.open(io.BytesIO(bottom_png)).convert("RGB")
-    width = max(top.width, bottom.width)
-    image = Image.new("RGB", (width, top.height + bottom.height), (255, 255, 255))
-    image.paste(top, (0, 0))
-    image.paste(bottom, (0, top.height))
+def _stitch_vertical_many(png_parts: list[bytes]) -> bytes:
+    images = [Image.open(io.BytesIO(p)).convert("RGB") for p in png_parts if p]
+    if not images:
+        raise ValueError("No images to stitch")
+    width = max(im.width for im in images)
+    height = sum(im.height for im in images)
+    canvas = Image.new("RGB", (width, height), (255, 255, 255))
+    y = 0
+    for im in images:
+        canvas.paste(im, (0, y))
+        y += im.height
     buf = io.BytesIO()
-    image.save(buf, format="PNG")
+    canvas.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _sections_are_contiguous(sections: list[Section]) -> bool:
+    ordered = sorted(sections, key=lambda s: s.start_row)
+    for idx in range(1, len(ordered)):
+        if ordered[idx].start_row > ordered[idx - 1].end_row + 2:
+            return False
+    return True
 
 
 def capture_sections_png(
@@ -814,48 +886,40 @@ def capture_sections_png(
     prefer_excel_com: bool = True,
 ) -> bytes | None:
     """
-    Screenshot the System scorecard like the live Excel view:
-    month header (JAN..YE) + selected vertical category blocks as one image.
+    Screenshot the System scorecard like the live Excel / template view:
+    month header (JAN..YE) + selected vertical category blocks.
     """
     if not sections:
         return None
     if layout is None:
         layout = detect_system_layout(workbook_bytes, sheet_name=sheet_name)
 
-    body_start, body_end, start_col, end_col = layout.capture_bounds_for(sections)
+    ordered = sorted(sections, key=lambda s: s.start_row)
+    start_col, end_col = layout.start_col, layout.end_col
 
-    # First N sections: one contiguous CopyPicture range (matches the provided screenshot).
-    if not layout.needs_header_stitch(sections):
+    def _cap(r1: int, r2: int) -> bytes:
         return capture_range_png(
             workbook_bytes,
             sheet_name,
-            layout.header_start_row,
-            body_end,
+            r1,
+            r2,
             start_col,
             end_col,
             prefer_excel_com=prefer_excel_com,
         )
 
-    # Later sections: capture header + body separately, then stitch.
-    header_png = capture_range_png(
-        workbook_bytes,
-        sheet_name,
-        layout.header_start_row,
-        layout.header_end_row,
-        start_col,
-        end_col,
-        prefer_excel_com=prefer_excel_com,
-    )
-    body_png = capture_range_png(
-        workbook_bytes,
-        sheet_name,
-        body_start,
-        body_end,
-        start_col,
-        end_col,
-        prefer_excel_com=prefer_excel_com,
-    )
-    return _stitch_vertical(header_png, body_png)
+    # Contiguous first-N categories: one CopyPicture range (template look).
+    if _sections_are_contiguous(ordered) and not layout.needs_header_stitch(ordered):
+        return _cap(layout.header_start_row, ordered[-1].end_row)
+
+    parts: list[bytes] = [_cap(layout.header_start_row, layout.header_end_row)]
+    if _sections_are_contiguous(ordered):
+        parts.append(_cap(ordered[0].start_row, ordered[-1].end_row))
+    else:
+        # Non-adjacent categories (e.g. Finance + People with a gap): capture each block.
+        for section in ordered:
+            parts.append(_cap(section.start_row, section.end_row))
+    return _stitch_vertical_many(parts)
 
 
 def place_picture_on_slide(
@@ -891,6 +955,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     mode = element.get("sections", "first")
     count = int(element.get("count", 3))
     include_black = bool(element.get("include_black", False))
+    match = element.get("match") or []
     prefer_com = bool(element.get("prefer_excel_com", True))
 
     try:
@@ -910,9 +975,15 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         mode=mode,
         count=count,
         include_black=include_black,
+        match=list(match) if match else None,
     )
     if not chosen:
-        logger.warning("No System sections selected for mode=%s count=%s", mode, count)
+        logger.warning(
+            "No System sections selected for mode=%s match=%s available=%s",
+            mode,
+            match,
+            [s.title for s in layout.sections],
+        )
         return False
 
     # Optional explicit A1 ranges override auto selection.
@@ -949,18 +1020,8 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         max_width=int(element.get("max_width", DEFAULT_WIDTH)),
         max_height=int(element.get("max_height", DEFAULT_HEIGHT)),
     )
-    start_row, end_row, start_col, end_col = layout.capture_bounds_for(chosen)
-    if layout.needs_header_stitch(chosen):
-        range_desc = (
-            f"{_range_address(layout.header_start_row, layout.header_end_row, start_col, end_col)}"
-            f" + {_range_address(start_row, end_row, start_col, end_col)}"
-        )
-    else:
-        range_desc = _range_address(layout.header_start_row, end_row, start_col, end_col)
     logger.info(
-        "Placed System scorecard image (%s!%s) sections=%s",
-        sheet_name,
-        range_desc,
+        "Placed System scorecard image on slide sections=%s",
         [s.title for s in chosen],
     )
     return True

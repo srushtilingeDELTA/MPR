@@ -75,8 +75,8 @@ python main.py
 | Slide | Content updated from Excel |
 |-------|----------------------------|
 | 0 | Report month text (e.g. May 2026) |
-| 2 | System Scorecard (PPT slide 3): JAN..YE header + first 3 category blocks (Safety, Customer, Operations) |
-| 3 | System Scorecard (PPT slide 4): JAN..YE header + last 2 category blocks + black/total section |
+| 2 | System Scorecard (PPT slide 3): Safety & Security + Customer Experience + Operations |
+| 3 | System Scorecard (PPT slide 4): People + Finance + Overall and Opportunities |
 | 4 | GIR tables + monthly trend chart |
 | 6 | People scorecard table (where KPIs match) |
 | 10 | PMI Motorized / Stationary charts |

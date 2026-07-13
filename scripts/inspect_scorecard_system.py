@@ -89,8 +89,16 @@ def main() -> int:
             f"rows {section.start_row}-{section.end_row}{flag}"
         )
 
-    slide3 = select_sections_for_slide(sections, mode="first", count=3)
-    slide4 = select_sections_for_slide(sections, mode="last", count=2, include_black=True)
+    slide3 = select_sections_for_slide(
+        sections,
+        mode="match",
+        match=["Safety & Security", "Customer Experience", "Operations"],
+    )
+    slide4 = select_sections_for_slide(
+        sections,
+        mode="match",
+        match=["Finance", "Financial", "People", "Overall", "Opportunities"],
+    )
     b3 = layout.capture_bounds_for(slide3)
     b4 = layout.capture_bounds_for(slide4)
     print("\nSlide 3 (PPT) capture:")
