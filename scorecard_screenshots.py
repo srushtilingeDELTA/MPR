@@ -1405,6 +1405,21 @@ def _capture_system_sections_via_com(
         excel, wb = _open_excel_workbook(workbook_path)
         ws = _find_com_worksheet(wb, sheet_name)
 
+        # Hide columns left of the colored category rail (duplicate % column + red border).
+        if start_col > 1:
+            try:
+                ws.Range(
+                    ws.Cells(1, 1),
+                    ws.Cells(1, start_col - 1),
+                ).EntireColumn.Hidden = True
+                logger.info(
+                    "Hid System columns %s-%s (duplicate %% rail / left border)",
+                    get_column_letter(1),
+                    get_column_letter(start_col - 1),
+                )
+            except Exception as exc:
+                logger.warning("Could not hide left System columns: %s", exc)
+
         # Hide rows between the month header and the first requested section.
         gap_start = header_end + 1
         gap_end = body_start - 1
@@ -1425,13 +1440,15 @@ def _capture_system_sections_via_com(
         rng = _prepare_sheet_for_copy(excel, ws, range_addr)
         png = _copy_range_picture(rng)
         logger.info(
-            "System COM section capture %s!%s (header R%s-%s + body R%s-%s)",
+            "System COM section capture %s!%s (header R%s-%s + body R%s-%s, cols %s-%s)",
             sheet_name,
             range_addr,
             header_start,
             header_end,
             body_start,
             body_end,
+            get_column_letter(start_col),
+            get_column_letter(end_col),
         )
         return png
     finally:
