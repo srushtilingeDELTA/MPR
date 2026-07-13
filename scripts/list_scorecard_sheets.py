@@ -15,8 +15,9 @@ from workbook_store import WorkbookStore
 SUGGESTED = [
     (2, "System sections: Safety/Customer/Ops"),
     (3, "System sections: People/Finance/Overall"),
+    (4, "workings GIR tab screenshot"),
     (5, "EA / ASAP / Compliance sheet (optional)"),
-    (7, "workings sheet 0 (finance overview)"),
+    (7, "workings SCORECARD SUMMARIES / sheet 0 (finance overview)"),
     (13, "North summary"),
     (14, "North comparison"),
     (15, "South summary"),

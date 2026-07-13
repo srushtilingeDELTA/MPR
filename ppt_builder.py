@@ -690,14 +690,13 @@ def _verify_output(prs: Presentation) -> None:
     if leftover_text:
         logger.warning("Agenda still has %s note-band shape(s) with leftover text", leftover_text)
 
-    for idx, label in ((2, "slide 3 System"), (3, "slide 4 System")):
+    for idx, label in ((2, "slide 3 System"), (3, "slide 4 System"), (4, "slide 5 GIR")):
         slide = prs.slides[idx]
         pics = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
         print(f"VERIFY {label}: {len(pics)} picture(s)")
         if not pics:
             logger.error(
-                "%s has NO screenshot picture — System capture failed. "
-                "Run: python scripts\\inspect_scorecard_system.py --dump-left",
+                "%s has NO screenshot picture — capture failed.",
                 label,
             )
             continue
@@ -733,6 +732,12 @@ def _verify_output(prs: Presentation) -> None:
                         )
             except Exception as exc:
                 logger.warning("%s could not inspect image blob: %s", label, exc)
+
+    # GIR should no longer keep the old template chart once the workings screenshot lands.
+    gir = prs.slides[4]
+    gir_charts = sum(1 for s in gir.shapes if getattr(s, "has_chart", False))
+    if gir_charts:
+        logger.warning("Slide 5 GIR still has %s template chart(s) — expected workings screenshot only", gir_charts)
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:

@@ -1837,6 +1837,52 @@ def _remove_slide_pictures(slide) -> int:
     return removed
 
 
+def _remove_slide_tables_and_charts(
+    slide,
+    *,
+    remove_tables: bool = False,
+    remove_charts: bool = False,
+    remove_band_labels: bool = False,
+    band_top: int | None = None,
+    band_bottom: int | None = None,
+) -> int:
+    """Remove template tables/charts/labels in a vertical band so a live screenshot can replace them."""
+    if not remove_tables and not remove_charts and not remove_band_labels:
+        return 0
+    removed = 0
+    for shape in list(slide.shapes):
+        is_table = bool(getattr(shape, "has_table", False))
+        is_chart = bool(getattr(shape, "has_chart", False))
+        is_label = bool(
+            remove_band_labels
+            and getattr(shape, "has_text_frame", False)
+            and not is_table
+            and not is_chart
+        )
+        if is_table and not remove_tables:
+            continue
+        if is_chart and not remove_charts:
+            continue
+        if is_label:
+            text = (shape.text_frame.text or "").strip().casefold()
+            # Keep chrome titles / speaker; drop in-band labels like "System GIR".
+            if not text or "speaker" in text or text in {"gir", "safety"}:
+                continue
+            if int(shape.top) < 650_000:
+                continue
+        elif not is_table and not is_chart:
+            continue
+        top = int(shape.top)
+        bottom = top + int(shape.height)
+        if band_top is not None and bottom < band_top:
+            continue
+        if band_bottom is not None and top > band_bottom:
+            continue
+        shape._element.getparent().remove(shape._element)
+        removed += 1
+    return removed
+
+
 def resolve_sheet_name(
     workbook_bytes: bytes,
     *,
@@ -2054,9 +2100,17 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     except Exception as exc:
         logger.debug("Could not write debug preview: %s", exc)
 
-    # Use the template picture slot geometry when present so placement matches the deck.
+    # Placement box: explicit element coords win; else reuse a template picture slot.
+    has_explicit_box = any(
+        element.get(key) is not None for key in ("left", "top", "max_width", "max_height")
+    )
     target = _largest_picture(slide)
-    if target is not None:
+    if has_explicit_box:
+        left = int(element.get("left", DEFAULT_LEFT))
+        top = int(element.get("top", DEFAULT_TOP))
+        width = int(element.get("max_width", DEFAULT_WIDTH))
+        height = int(element.get("max_height", DEFAULT_HEIGHT))
+    elif target is not None:
         left, top, width, height = int(target.left), int(target.top), int(target.width), int(target.height)
     else:
         left = int(element.get("left", DEFAULT_LEFT))
@@ -2072,6 +2126,22 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         removed = _remove_slide_pictures(slide)
         if removed:
             logger.info("Removed %s template picture(s) before placing live scorecard image", removed)
+
+    # GIR (and similar) slides store old data in tables/charts — clear that band first.
+    cleared = _remove_slide_tables_and_charts(
+        slide,
+        remove_tables=bool(element.get("remove_tables", False)),
+        remove_charts=bool(element.get("remove_charts", False)),
+        remove_band_labels=bool(element.get("remove_band_labels", False)),
+        band_top=int(element["clear_band_top"]) if element.get("clear_band_top") is not None else top,
+        band_bottom=(
+            int(element["clear_band_bottom"])
+            if element.get("clear_band_bottom") is not None
+            else top + height
+        ),
+    )
+    if cleared:
+        logger.info("Removed %s template table/chart shape(s) before placing live image", cleared)
 
     place_picture_on_slide(
         slide,

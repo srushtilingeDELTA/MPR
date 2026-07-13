@@ -64,7 +64,7 @@ python main.py
 | 1 | Planned Discussion agenda topics + times |
 | 2 | System scorecard screenshot: Safety & Security + Customer Experience + Operations |
 | 3 | System scorecard screenshot: People + Finance + Overall and Opportunities |
-| 4 | GIR tables + monthly trend chart (actuals) |
+| 4 | GIR screenshot from workings workbook (`GIR` tab) |
 | 5 | EA / ASAP screenshot when a matching scorecard sheet exists |
 | 6 | People table + charts (actuals) |
 | 7 | Finance overview screenshot from workings workbook |

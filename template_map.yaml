@@ -59,19 +59,33 @@ slides:
         grow: 1.06
         optional: false
 
-  # PPT 5 — GIR (live tables + chart from actuals)
+  # PPT 5 — GIR from New GSE MPR Workings.xlsx → GIR tab (live screenshot)
+  # Replaces template tables/chart in the data band; keeps title + Leading Issues / Action Plan.
   - index: 4
     name: gir
     keep_title: true
     elements:
-      - type: gir_tables
-        workbook: actuals
-        kpis:
-          gir: GIR
-          injury_count: "Injury Count"
-      - type: gir_charts
-        workbook: actuals
-        kpi: GIR
+      - type: scorecard_screenshot
+        workbook: workings
+        sheet: "GIR"
+        sheet_match: ["GIR"]
+        sections: sheet
+        replace_existing_pictures: true
+        remove_tables: true
+        remove_charts: true
+        remove_band_labels: true
+        # Content band under title / above Leading Issues + Action Plan
+        left: 314628
+        top: 720000
+        max_width: 11534806
+        max_height: 3800000
+        clear_band_top: 700000
+        clear_band_bottom: 4550000
+        fit: fill
+        grow: 1.0
+        max_rows: 80
+        max_cols: 30
+        optional: false
 
   # PPT 6 — EA Compliance / ASAP (template picture → live screenshot when sheet exists)
   - index: 5
