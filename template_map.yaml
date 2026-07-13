@@ -16,7 +16,8 @@ slides:
     elements:
       - type: agenda
 
-  # PPT 3 — System Scorecard (Safety / Customer Experience / Operations)
+  # PPT 3 — System Scorecard from 2026 - GSE Scorecards.xlsx → System tab
+  # Safety & Security + Customer Experience + Operations
   - index: 2
     name: scorecard_summary_1
     keep_title: true
@@ -34,7 +35,8 @@ slides:
         fit: fill
         optional: false
 
-  # PPT 4 — System Scorecard (People / Finance / Overall)
+  # PPT 4 — System Scorecard from same System tab
+  # People + Finance + Overall and Opportunities
   - index: 3
     name: scorecard_summary_2
     keep_title: true
@@ -47,6 +49,7 @@ slides:
           - "People"
           - "Finance"
           - "Financial"
+          - "Overall and Opportunities"
           - "Overall"
           - "Opportunities"
         fallback_indices: [3, 4, 5]

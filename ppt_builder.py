@@ -129,11 +129,143 @@ AGENDA_TOPICS: list[tuple[str, str]] = [
 ]
 
 
-def fill_agenda_slide(slide) -> None:
-    """Restore Planned Discussion topic titles and time ovals left-to-right.
+def _agenda_chevrons(slide):
+    """Tall off-page-connector shapes that form the nine topic columns."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-    The template uses separate text boxes (titles) and bottom ovals (times).
-    Older builds cleared those; this writes the canonical agenda back in.
+    chevrons = [
+        shape
+        for shape in slide.shapes
+        if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+        and "off-page" in (shape.name or "").casefold()
+        and int(shape.height) > 2_000_000
+    ]
+    chevrons.sort(key=lambda s: int(s.left))
+    return chevrons
+
+
+def _agenda_divider_lines(slide, chevron) -> list[int]:
+    """Y positions of horizontal white divider lines inside one chevron."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    left = int(chevron.left)
+    right = left + int(chevron.width)
+    tops: list[int] = []
+    for shape in slide.shapes:
+        if shape.shape_type != MSO_SHAPE_TYPE.LINE:
+            continue
+        mid = int(shape.left) + int(shape.width) // 2
+        top = int(shape.top)
+        if left - 80_000 <= mid <= right + 80_000 and 2_100_000 < top < 4_100_000:
+            tops.append(top)
+    return sorted(set(tops))
+
+
+def _ensure_agenda_line_textboxes(slide) -> int:
+    """Create editable text boxes in the gaps between white lines in each chevron.
+
+    Returns the number of text boxes added. Existing non-empty boxes are left alone
+    so users can type or paste discussion notes into each line slot.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Emu, Pt
+
+    added = 0
+    chevrons = _agenda_chevrons(slide)
+    for chevron in chevrons:
+        lines = _agenda_divider_lines(slide, chevron)
+        if len(lines) < 2:
+            # Fallback: three evenly spaced editable slots in the chevron body.
+            body_top = int(chevron.top) + int(chevron.height) * 28 // 100
+            body_bottom = int(chevron.top) + int(chevron.height) * 88 // 100
+            step = max(1, (body_bottom - body_top) // 3)
+            lines = [body_top + i * step for i in range(4)]
+            lines[-1] = body_bottom
+
+        col_left = int(chevron.left) + 40_000
+        col_width = max(200_000, int(chevron.width) - 80_000)
+
+        for idx in range(len(lines) - 1):
+            slot_top = lines[idx] + 20_000
+            slot_bottom = lines[idx + 1] - 20_000
+            if slot_bottom - slot_top < 80_000:
+                continue
+            slot_mid = (slot_top + slot_bottom) // 2
+
+            # Already have a text box whose vertical center sits in this slot?
+            occupied = False
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                mid_x = int(shape.left) + int(shape.width) // 2
+                mid_y = int(shape.top) + int(shape.height) // 2
+                if not (col_left - 60_000 <= mid_x <= col_left + col_width + 60_000):
+                    continue
+                if slot_top <= mid_y <= slot_bottom:
+                    occupied = True
+                    # Keep an empty single-run structure so paste/typing works.
+                    if not shape.text_frame.text.strip():
+                        tf = shape.text_frame
+                        tf.word_wrap = True
+                        try:
+                            tf.auto_size = None
+                        except Exception:
+                            pass
+                        if not tf.paragraphs:
+                            continue
+                        para = tf.paragraphs[0]
+                        para.alignment = PP_ALIGN.CENTER
+                        if not para.runs:
+                            run = para.add_run()
+                            run.text = ""
+                            run.font.size = Pt(10)
+                            run.font.bold = False
+                            run.font.color.rgb = RGBColor(255, 255, 255)
+                    break
+            if occupied:
+                continue
+
+            box = slide.shapes.add_textbox(
+                Emu(col_left),
+                Emu(slot_top),
+                Emu(col_width),
+                Emu(slot_bottom - slot_top),
+            )
+            box.name = f"AgendaNote_{added + 1}"
+            tf = box.text_frame
+            tf.word_wrap = True
+            try:
+                tf.auto_size = None
+            except Exception:
+                pass
+            try:
+                tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+            except Exception:
+                pass
+            para = tf.paragraphs[0]
+            run = para.add_run() if not para.runs else para.runs[0]
+            run.text = ""
+            run.font.size = Pt(10)
+            run.font.bold = False
+            try:
+                run.font.color.rgb = RGBColor(255, 255, 255)
+            except Exception:
+                pass
+            # Prefer middle vertical alignment when the XML bodyPr is available.
+            try:
+                box.text_frame._txBody.bodyPr.set("anchor", "ctr")  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            added += 1
+    return added
+
+
+def fill_agenda_slide(slide) -> None:
+    """Restore Planned Discussion titles, times, and editable line text boxes.
+
+    Matches the template chevron layout: numbered topics, time ovals, and empty
+    white-line slots where discussion notes can be typed or pasted.
     """
     title_boxes = [
         shape
@@ -171,7 +303,12 @@ def fill_agenda_slide(slide) -> None:
         if idx < len(time_ovals):
             set_text_frame_preserve(time_ovals[idx].text_frame, minutes)
 
-    logger.info("Filled Planned Discussion agenda (%s topics)", len(AGENDA_TOPICS))
+    added = _ensure_agenda_line_textboxes(slide)
+    logger.info(
+        "Filled Planned Discussion agenda (%s topics, +%s line textboxes)",
+        len(AGENDA_TOPICS),
+        added,
+    )
 
 
 def _build_chart_data(actuals: list[float | None], goal: float | None, existing_chart) -> CategoryChartData:

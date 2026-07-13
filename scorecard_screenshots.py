@@ -892,7 +892,8 @@ def select_sections_for_slide(
             for section in sections:
                 if section.index in used:
                     continue
-                if needle in section.title.casefold():
+                title = section.title.casefold()
+                if needle in title or title in needle:
                     chosen.append(section)
                     used.add(section.index)
                     break
@@ -909,7 +910,10 @@ def select_sections_for_slide(
             fallback = select_sections_for_slide(sections, mode="indices", indices=indices)
             if fallback:
                 return fallback
-            # Indices out of range (e.g. only one mega-section) — take first/last third.
+            if len(sections) >= 6 and indices:
+                # Canonical System layout: 0-2 slide3, 3-5 slide4.
+                start = 0 if min(indices) < 3 else 3
+                return sections[start : start + 3]
             if len(sections) == 1:
                 return list(sections)
             mid = max(1, len(sections) // 2)

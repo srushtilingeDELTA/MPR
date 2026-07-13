@@ -93,11 +93,13 @@ def main() -> int:
         sections,
         mode="match",
         match=["Safety & Security", "Customer Experience", "Operations"],
+        indices=[0, 1, 2],
     )
     slide4 = select_sections_for_slide(
         sections,
         mode="match",
-        match=["Finance", "Financial", "People", "Overall", "Opportunities"],
+        match=["People", "Finance", "Overall and Opportunities", "Overall", "Opportunities"],
+        indices=[3, 4, 5],
     )
     b3 = layout.capture_bounds_for(slide3)
     b4 = layout.capture_bounds_for(slide4)
