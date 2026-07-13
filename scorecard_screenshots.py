@@ -1040,7 +1040,43 @@ def _is_mostly_blank(png_bytes: bytes, *, white_ratio: float = 0.90) -> bool:
     return (whiteish / len(pixels)) >= white_ratio
 
 
-def _validate_capture(png_bytes: bytes, *, label: str, min_w: int = 300, min_h: int = 120) -> bytes:
+def _autocrop_whitespace(png_bytes: bytes, *, threshold: int = 248, pad: int = 4) -> bytes:
+    """Trim near-white margins so the scorecard fills the picture like the template EMF."""
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        rgb = img.convert("RGB")
+        w, h = rgb.size
+        pixels = rgb.load()
+
+        def is_content(x: int, y: int) -> bool:
+            r, g, b = pixels[x, y]
+            return r < threshold or g < threshold or b < threshold
+
+        top = 0
+        while top < h and not any(is_content(x, top) for x in range(w)):
+            top += 1
+        bottom = h - 1
+        while bottom > top and not any(is_content(x, bottom) for x in range(w)):
+            bottom -= 1
+        left = 0
+        while left < w and not any(is_content(left, y) for y in range(top, bottom + 1)):
+            left += 1
+        right = w - 1
+        while right > left and not any(is_content(right, y) for y in range(top, bottom + 1)):
+            right -= 1
+
+        if right - left < 20 or bottom - top < 20:
+            return png_bytes
+        box = (
+            max(0, left - pad),
+            max(0, top - pad),
+            min(w, right + pad + 1),
+            min(h, bottom + pad + 1),
+        )
+        return _png_from_pil(rgb.crop(box))
+
+
+def _validate_capture(png_bytes: bytes, *, label: str, min_w: int = 400, min_h: int = 150) -> bytes:
+    png_bytes = _autocrop_whitespace(png_bytes)
     with Image.open(io.BytesIO(png_bytes)) as img:
         width, height = img.width, img.height
         png = _png_from_pil(img)
@@ -1048,37 +1084,15 @@ def _validate_capture(png_bytes: bytes, *, label: str, min_w: int = 300, min_h: 
         raise RuntimeError(f"{label} capture too small: {width}x{height}")
     if _is_mostly_blank(png):
         raise RuntimeError(f"{label} capture is mostly blank/white ({width}x{height}, {len(png)} bytes)")
-    logger.info("%s capture OK: %sx%s (%s bytes)", label, width, height, len(png))
+    # Template EMFs are ~2094px wide scorecards — reject tiny/odd aspect grabs.
+    aspect = width / max(height, 1)
+    if aspect < 1.2:
+        raise RuntimeError(
+            f"{label} capture aspect {aspect:.2f} looks wrong for a scorecard "
+            f"({width}x{height}) — expected a wide grid like the template"
+        )
+    logger.info("%s capture OK: %sx%s aspect=%.2f (%s bytes)", label, width, height, aspect, len(png))
     return png
-
-
-def _grab_excel_window_png(excel) -> bytes:
-    """Screenshot the Excel window client area (after zoom-to-selection)."""
-    import win32gui  # type: ignore
-    from PIL import ImageGrab
-
-    hwnd = int(excel.Hwnd)
-    win32gui.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
-    try:
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        pass
-    time.sleep(0.5)
-
-    _left, _top, right, bottom = win32gui.GetClientRect(hwnd)
-    pt_left, pt_top = win32gui.ClientToScreen(hwnd, (0, 0))
-    pt_right, pt_bottom = win32gui.ClientToScreen(hwnd, (right, bottom))
-    # Skip ribbon / formula bar so the grid dominates the image.
-    ribbon_pad = 150
-    status_pad = 30
-    bbox = (
-        pt_left,
-        pt_top + ribbon_pad,
-        pt_right,
-        max(pt_top + ribbon_pad + 100, pt_bottom - status_pad),
-    )
-    img = ImageGrab.grab(bbox=bbox, all_screens=True)
-    return _png_from_pil(img)
 
 
 def _copy_picture_to_png(rng, *, appearance: int, fmt: int) -> bytes | None:
@@ -1094,14 +1108,126 @@ def _copy_picture_to_png(rng, *, appearance: int, fmt: int) -> bytes | None:
     return None
 
 
-def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str) -> bytes:
-    """True Excel screenshot of a worksheet range.
+def _open_excel_workbook(workbook_path: Path):
+    """Open Excel visible (required for non-blank CopyPicture) and return (excel, wb)."""
+    import win32com.client  # type: ignore
 
-    Important: Excel must be visible and NOT minimized. Minimized/hidden windows
-    produce blank white CopyPicture bitmaps (exactly what slides 3/4 were showing).
-    """
     try:
-        import win32com.client  # type: ignore
+        excel = win32com.client.gencache.EnsureDispatch("Excel.Application")
+    except Exception:
+        excel = win32com.client.DispatchEx("Excel.Application")
+
+    excel.Visible = True
+    excel.DisplayAlerts = False
+    excel.ScreenUpdating = True
+    try:
+        # Normal window — maximized+window-grab looks like Excel UI, not a scorecard paste.
+        excel.WindowState = -4143  # xlNormal
+    except Exception:
+        pass
+    try:
+        excel.Width = 1400
+        excel.Height = 900
+    except Exception:
+        pass
+
+    wb = excel.Workbooks.Open(str(workbook_path.resolve()), ReadOnly=True, UpdateLinks=0)
+    return excel, wb
+
+
+def _prepare_sheet_for_copy(excel, ws, range_addr: str):
+    """Select range at 100% zoom — matches how template scorecard EMFs were created."""
+    ws.Activate()
+    try:
+        excel.ActiveWindow.DisplayGridlines = False
+        excel.ActiveWindow.DisplayHeadings = False
+        excel.ActiveWindow.Zoom = 100
+    except Exception:
+        pass
+    try:
+        excel.CalculateUntilAsyncQueriesDone()
+    except Exception:
+        try:
+            excel.Calculate()
+        except Exception:
+            pass
+
+    rng = ws.Range(range_addr)
+    try:
+        excel.Goto(rng, True)
+    except Exception:
+        try:
+            rng.Select()
+        except Exception:
+            pass
+    time.sleep(0.35)
+    return rng
+
+
+def _copy_range_picture(rng) -> bytes:
+    """CopyPicture the Excel range to a validated PNG (template-style paste)."""
+    errors: list[str] = []
+    # Prefer printer quality, then screen bitmap. Avoid window screenshots.
+    for appearance, fmt in ((2, 2), (1, 2)):  # xlPrinter/xlScreen + xlBitmap
+        try:
+            png = _copy_picture_to_png(rng, appearance=appearance, fmt=fmt)
+            if png:
+                return _validate_capture(png, label=f"CopyPicture({appearance}/{fmt})")
+        except Exception as exc:
+            errors.append(f"{appearance}/{fmt}:{exc}")
+
+    # Chart.Export fallback still uses the range picture, not the Excel window.
+    chart_obj = None
+    export_path = Path(tempfile.gettempdir()) / f"mpr_scorecard_{os.getpid()}_{time.time_ns()}.png"
+    try:
+        ws = rng.Worksheet
+        width = max(float(rng.Width), 40.0)
+        height = max(float(rng.Height), 40.0)
+        max_side = 1600.0
+        scale = min(1.0, max_side / width, max_side / height)
+        chart_obj = ws.ChartObjects().Add(10, 10, width * scale, height * scale)
+        for appearance, fmt in ((2, 2), (1, 2)):
+            try:
+                rng.CopyPicture(Appearance=appearance, Format=fmt)
+                time.sleep(0.25)
+                chart_obj.Chart.Paste()
+                time.sleep(0.25)
+                if export_path.exists():
+                    export_path.unlink()
+                chart_obj.Chart.Export(str(export_path))
+                if export_path.exists() and export_path.stat().st_size > 1500:
+                    return _validate_capture(
+                        export_path.read_bytes(),
+                        label=f"Chart.Export({appearance}/{fmt})",
+                    )
+            except Exception as exc:
+                errors.append(f"chart:{exc}")
+    finally:
+        if chart_obj is not None:
+            try:
+                chart_obj.Delete()
+            except Exception:
+                pass
+        try:
+            if export_path.exists():
+                export_path.unlink()
+        except Exception:
+            pass
+
+    raise RuntimeError(f"CopyPicture failed ({'; '.join(errors) or 'no image'})")
+
+
+def _find_com_worksheet(wb, sheet_name: str):
+    for sheet in wb.Worksheets:
+        if _norm_sheet_key(sheet.Name) == _norm_sheet_key(sheet_name):
+            return sheet
+    raise ValueError(f"Worksheet {sheet_name!r} not found in Excel COM open")
+
+
+def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str) -> bytes:
+    """True Excel range screenshot via CopyPicture (same approach as the template EMFs)."""
+    try:
+        import win32com.client  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
             "pywin32 is not installed. Run: pip install pywin32\n"
@@ -1110,126 +1236,88 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
 
     excel = None
     wb = None
-    chart_obj = None
-    errors: list[str] = []
     try:
-        try:
-            excel = win32com.client.gencache.EnsureDispatch("Excel.Application")
-        except Exception:
-            excel = win32com.client.DispatchEx("Excel.Application")
-
-        excel.Visible = True
-        excel.DisplayAlerts = False
-        excel.ScreenUpdating = True
-        try:
-            excel.WindowState = -4137  # xlMaximized — never minimize during capture
-        except Exception:
-            pass
-
-        wb = excel.Workbooks.Open(str(workbook_path.resolve()), ReadOnly=True, UpdateLinks=0)
-        ws = None
-        for sheet in wb.Worksheets:
-            if _norm_sheet_key(sheet.Name) == _norm_sheet_key(sheet_name):
-                ws = sheet
-                break
-        if ws is None:
-            raise ValueError(f"Worksheet {sheet_name!r} not found in Excel COM open")
-        ws.Activate()
-
-        try:
-            excel.ActiveWindow.DisplayGridlines = False
-        except Exception:
-            pass
-        try:
-            excel.CalculateUntilAsyncQueriesDone()
-        except Exception:
-            try:
-                excel.Calculate()
-            except Exception:
-                pass
-
-        rng = ws.Range(range_addr)
-        try:
-            excel.Goto(rng, True)
-        except Exception:
-            try:
-                rng.Select()
-            except Exception:
-                pass
-        # Zoom so the selected range fills the window (VBA: ActiveWindow.Zoom = True).
-        try:
-            excel.ActiveWindow.Zoom = True
-        except Exception:
-            try:
-                excel.ActiveWindow.Zoom = 70
-            except Exception:
-                pass
-
-        time.sleep(0.6)
-
-        # 1) Window screenshot — most reliable for formatted scorecards.
-        try:
-            return _validate_capture(_grab_excel_window_png(excel), label="Excel window")
-        except Exception as exc:
-            errors.append(f"window:{exc}")
-            logger.info("Excel window capture skipped: %s", exc)
-
-        # 2) CopyPicture -> clipboard (screen/printer bitmap).
-        for appearance, fmt in ((1, 2), (2, 2), (1, -4147)):
-            try:
-                png = _copy_picture_to_png(rng, appearance=appearance, fmt=fmt)
-                if png:
-                    return _validate_capture(png, label=f"CopyPicture({appearance}/{fmt})")
-            except Exception as exc:
-                errors.append(f"clipboard:{exc}")
-
-        # 3) CopyPicture -> Chart.Export file (still validate not blank).
-        export_path = Path(tempfile.gettempdir()) / f"mpr_scorecard_{os.getpid()}_{time.time_ns()}.png"
-        try:
-            width = max(float(rng.Width), 40.0)
-            height = max(float(rng.Height), 40.0)
-            max_side = 1400.0
-            scale = min(1.0, max_side / width, max_side / height)
-            chart_obj = ws.ChartObjects().Add(10, 10, width * scale, height * scale)
-            for appearance, fmt in ((1, 2), (2, 2)):
-                try:
-                    rng.CopyPicture(Appearance=appearance, Format=fmt)
-                    time.sleep(0.25)
-                    chart_obj.Chart.Paste()
-                    time.sleep(0.25)
-                    if export_path.exists():
-                        export_path.unlink()
-                    chart_obj.Chart.Export(str(export_path))
-                    if export_path.exists() and export_path.stat().st_size > 1500:
-                        return _validate_capture(
-                            export_path.read_bytes(),
-                            label=f"Chart.Export({appearance}/{fmt})",
-                        )
-                except Exception as exc:
-                    errors.append(f"chart:{exc}")
-        except Exception as exc:
-            errors.append(f"chart-setup:{exc}")
-        finally:
-            if chart_obj is not None:
-                try:
-                    chart_obj.Delete()
-                except Exception:
-                    pass
-                chart_obj = None
-            try:
-                if export_path.exists():
-                    export_path.unlink()
-            except Exception:
-                pass
-
-        raise RuntimeError(
-            f"Excel COM produced only blank/invalid images for {sheet_name}!{range_addr}. "
-            f"Attempts: {'; '.join(errors) or 'none'}"
-        )
+        excel, wb = _open_excel_workbook(workbook_path)
+        ws = _find_com_worksheet(wb, sheet_name)
+        rng = _prepare_sheet_for_copy(excel, ws, range_addr)
+        return _copy_range_picture(rng)
     finally:
-        if chart_obj is not None:
+        try:
+            if wb is not None:
+                wb.Close(SaveChanges=False)
+        except Exception:
+            pass
+        try:
+            if excel is not None:
+                excel.Quit()
+        except Exception:
+            pass
+
+
+def _capture_system_sections_via_com(
+    workbook_path: Path,
+    sheet_name: str,
+    *,
+    header_start: int,
+    header_end: int,
+    body_start: int,
+    body_end: int,
+    start_col: int,
+    end_col: int,
+) -> bytes:
+    """Capture header + selected System sections as one clean scorecard image.
+
+    When People/Finance sit below Safety/CX/Ops, hide the intervening rows so
+    CopyPicture returns header+selected blocks contiguous — matching the template
+    EMF layout instead of a wrong Pillow crop or an Excel-window screenshot.
+    """
+    try:
+        import win32com.client  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError("pywin32 is not installed") from exc
+
+    excel = None
+    wb = None
+    hidden_rows: list[tuple[int, int]] = []
+    try:
+        excel, wb = _open_excel_workbook(workbook_path)
+        ws = _find_com_worksheet(wb, sheet_name)
+
+        # Hide rows between the month header and the first requested section.
+        gap_start = header_end + 1
+        gap_end = body_start - 1
+        if gap_end >= gap_start:
             try:
-                chart_obj.Delete()
+                hide_rng = ws.Range(f"{gap_start}:{gap_end}")
+                hide_rng.EntireRow.Hidden = True
+                hidden_rows.append((gap_start, gap_end))
+                logger.info(
+                    "Hid System rows %s-%s so CopyPicture matches template (header + selected sections)",
+                    gap_start,
+                    gap_end,
+                )
+            except Exception as exc:
+                logger.warning("Could not hide intervening System rows: %s", exc)
+
+        range_addr = _range_address(header_start, body_end, start_col, end_col)
+        rng = _prepare_sheet_for_copy(excel, ws, range_addr)
+        png = _copy_range_picture(rng)
+        logger.info(
+            "System COM section capture %s!%s (header R%s-%s + body R%s-%s)",
+            sheet_name,
+            range_addr,
+            header_start,
+            header_end,
+            body_start,
+            body_end,
+        )
+        return png
+    finally:
+        for start, end in hidden_rows:
+            try:
+                if wb is not None:
+                    ws = _find_com_worksheet(wb, sheet_name)
+                    ws.Range(f"{start}:{end}").EntireRow.Hidden = False
             except Exception:
                 pass
         try:
@@ -1469,12 +1557,8 @@ def capture_sections_png(
     prefer_excel_com: bool = True,
 ) -> bytes | None:
     """
-    Screenshot the System scorecard like the live Excel / template view:
-    month header (JAN..YE) + selected vertical category blocks.
-
-    Always CopyPicture once from the header through the last selected section,
-    then crop/stitch bands. This avoids tiny 1-row header captures that break
-    slide 4 quality when People/Finance sit below earlier categories.
+    Screenshot the System scorecard like the template EMF paste:
+    month header (JAN..YE) + selected vertical category blocks in one image.
     """
     if not sections:
         return None
@@ -1483,49 +1567,52 @@ def capture_sections_png(
 
     ordered = sorted(sections, key=lambda s: s.start_row)
     start_col, end_col = layout.start_col, layout.end_col
-    full_start = layout.header_start_row
-    full_end = max(s.end_row for s in ordered)
+    header_start = layout.header_start_row
+    header_end = layout.header_end_row
+    body_start = min(s.start_row for s in ordered)
+    body_end = max(s.end_row for s in ordered)
 
-    def _cap(r1: int, r2: int) -> bytes:
-        return capture_range_png(
-            workbook_bytes,
-            sheet_name,
-            r1,
-            r2,
-            start_col,
-            end_col,
-            prefer_excel_com=prefer_excel_com,
-        )
+    if prefer_excel_com:
+        try:
+            with tempfile.TemporaryDirectory(prefix="mpr_system_") as tmp:
+                path = Path(tmp) / "scorecards.xlsx"
+                path.write_bytes(workbook_bytes)
+                png = _capture_system_sections_via_com(
+                    path,
+                    sheet_name,
+                    header_start=header_start,
+                    header_end=header_end,
+                    body_start=body_start,
+                    body_end=body_end,
+                    start_col=start_col,
+                    end_col=end_col,
+                )
+                with Image.open(io.BytesIO(png)) as img:
+                    logger.info(
+                        "System sections capture %s -> %sx%s (%s bytes) sections=%s",
+                        sheet_name,
+                        img.width,
+                        img.height,
+                        len(png),
+                        [s.title for s in ordered],
+                    )
+                return png
+        except Exception as exc:
+            logger.warning(
+                "System COM section capture failed (%s); falling back to range capture/render",
+                exc,
+            )
 
-    # Contiguous first-N categories under the header: one CopyPicture (template look).
-    if _sections_are_contiguous(ordered) and not layout.needs_header_stitch(ordered):
-        return _cap(full_start, full_end)
-
-    # Capture the full vertical span once, then crop header + body bands.
-    full_png = _cap(full_start, full_end)
-    heights = _row_height_weights(workbook_bytes, sheet_name, full_start, full_end)
-
-    def _band(r1: int, r2: int) -> bytes:
-        return _crop_row_band(full_png, heights, r1 - full_start, r2 - full_start)
-
-    parts: list[bytes] = [_band(layout.header_start_row, layout.header_end_row)]
-    if _sections_are_contiguous(ordered):
-        parts.append(_band(ordered[0].start_row, ordered[-1].end_row))
-    else:
-        for section in ordered:
-            parts.append(_band(section.start_row, section.end_row))
-
-    stitched = _stitch_vertical_many(parts)
-    logger.info(
-        "System capture cropped from %s!%s (%s bytes -> %s bytes, sections=%s)",
+    # Fallback: contiguous range capture (or Pillow) without row hiding.
+    return capture_range_png(
+        workbook_bytes,
         sheet_name,
-        _range_address(full_start, full_end, start_col, end_col),
-        len(full_png),
-        len(stitched),
-        [s.title for s in ordered],
+        header_start,
+        body_end,
+        start_col,
+        end_col,
+        prefer_excel_com=prefer_excel_com,
     )
-    return stitched
-
 
 def place_picture_on_slide(
     slide,
@@ -1794,6 +1881,19 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
     if not png:
         print(f"\n>>> FAILED to capture screenshot for {workbook}!{sheet_name}\n")
         return False
+
+    # Save a debug preview next to the report so capture quality is easy to review.
+    try:
+        with Image.open(io.BytesIO(png)) as preview:
+            out_dir = Path(getattr(data.store, "base_dir", Path("."))) / "output"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            debug_path = out_dir / (
+                f"_debug_{workbook}_{_norm_sheet_key(sheet_name)}_{preview.width}x{preview.height}.png"
+            )
+            preview.save(debug_path)
+            print(f">>> Debug preview saved: {debug_path} ({preview.width}x{preview.height})")
+    except Exception as exc:
+        logger.debug("Could not write debug preview: %s", exc)
 
     # Use the template picture slot geometry when present so placement matches the deck.
     target = _largest_picture(slide)

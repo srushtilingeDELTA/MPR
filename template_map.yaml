@@ -32,7 +32,7 @@ slides:
           - "Operations"
         fallback_indices: [0, 1, 2]
         replace_existing_pictures: true
-        fit: fill
+        fit: contain
         optional: false
 
   # PPT 4 — System Scorecard from same System tab
@@ -54,7 +54,7 @@ slides:
           - "Opportunities"
         fallback_indices: [3, 4, 5]
         replace_existing_pictures: true
-        fit: fill
+        fit: contain
         optional: false
 
   # PPT 5 — GIR (live tables + chart from actuals)
