@@ -23,10 +23,11 @@ from PIL import Image, ImageDraw, ImageFont
 logger = logging.getLogger(__name__)
 
 # Content area under the System Scorecard title on slides 3/4 (EMU).
-DEFAULT_LEFT = 167148
-DEFAULT_TOP = 720000
-DEFAULT_WIDTH = 11800000
-DEFAULT_HEIGHT = 5900000
+# Matches the template picture slot used in the live GSE deck.
+DEFAULT_LEFT = 314628
+DEFAULT_TOP = 997580
+DEFAULT_WIDTH = 11534806
+DEFAULT_HEIGHT = 4862840
 
 
 @dataclass
@@ -1459,9 +1460,16 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
             layout=layout,
             prefer_excel_com=prefer_com,
         )
-        logger.info("System screenshot sections=%s", [s.title for s in chosen])
+        names = [s.title for s in chosen]
+        logger.info("System screenshot sections=%s", names)
+        print(
+            f"\n>>> SYSTEM SCORECARD CAPTURE ({sheet_name}): "
+            + " | ".join(names)
+            + f"  [{len(png) if png else 0} bytes]\n"
+        )
 
     if not png:
+        print(f"\n>>> FAILED to capture screenshot for {workbook}!{sheet_name}\n")
         return False
 
     # Use the template picture slot geometry when present so placement matches the deck.
@@ -1473,6 +1481,10 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         top = int(element.get("top", DEFAULT_TOP))
         width = int(element.get("max_width", DEFAULT_WIDTH))
         height = int(element.get("max_height", DEFAULT_HEIGHT))
+        print(
+            f">>> No template picture slot found — placing at default content box "
+            f"({left},{top},{width},{height})"
+        )
 
     if replace_existing:
         removed = _remove_slide_pictures(slide)
@@ -1498,4 +1510,5 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         height,
         fit,
     )
+    print(f">>> Placed live image on slide from {workbook}/{sheet_name}")
     return True

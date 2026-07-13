@@ -12,9 +12,13 @@ from pathlib import Path
 import yaml
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
+from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE_TYPE
-from pptx.util import Pt
+from pptx.enum.text import PP_ALIGN
+from pptx.oxml.ns import qn
+from pptx.util import Emu, Pt
+from lxml import etree
 
 from mpr_data import MONTH_LABELS, MprData
 from ppt_format import (
@@ -74,6 +78,14 @@ def _remove_shape(shape) -> None:
     element.getparent().remove(element)
 
 
+def _bring_to_front(slide, shape) -> None:
+    """Move a shape to the top of the z-order so it is clickable."""
+    tree = slide.shapes._spTree
+    element = shape._element
+    tree.remove(element)
+    tree.append(element)
+
+
 def _is_title_shape(slide, shape) -> bool:
     if slide.shapes.title is not None and shape.shape_id == slide.shapes.title.shape_id:
         return True
@@ -128,11 +140,12 @@ AGENDA_TOPICS: list[tuple[str, str]] = [
     ("Closing", "3 min"),
 ]
 
+# Soft placeholder so line slots are visibly present; replace when typing.
+AGENDA_NOTE_PLACEHOLDER = "•"
+
 
 def _agenda_chevrons(slide):
     """Tall off-page-connector shapes that form the nine topic columns."""
-    from pptx.enum.shapes import MSO_SHAPE_TYPE
-
     chevrons = [
         shape
         for shape in slide.shapes
@@ -146,8 +159,6 @@ def _agenda_chevrons(slide):
 
 def _agenda_divider_lines(slide, chevron) -> list[int]:
     """Y positions of horizontal white divider lines inside one chevron."""
-    from pptx.enum.shapes import MSO_SHAPE_TYPE
-
     left = int(chevron.left)
     right = left + int(chevron.width)
     tops: list[int] = []
@@ -161,40 +172,104 @@ def _agenda_divider_lines(slide, chevron) -> list[int]:
     return sorted(set(tops))
 
 
+def _style_agenda_note_box(box, *, placeholder: str = AGENDA_NOTE_PLACEHOLDER) -> None:
+    """White centered note text + thin white border so the slot is visible/clickable."""
+    tf = box.text_frame
+    tf.word_wrap = True
+    try:
+        tf.auto_size = None
+    except Exception:
+        pass
+    try:
+        box.text_frame._txBody.bodyPr.set("anchor", "ctr")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # Visible thin white outline.
+    try:
+        sp_pr = box._element.spPr
+        for old in list(sp_pr.findall(qn("a:ln"))):
+            sp_pr.remove(old)
+        ln = etree.SubElement(sp_pr, qn("a:ln"))
+        ln.set("w", "6350")  # ~0.5 pt
+        solid = etree.SubElement(ln, qn("a:solidFill"))
+        srgb = etree.SubElement(solid, qn("a:srgbClr"))
+        srgb.set("val", "FFFFFF")
+        alpha = etree.SubElement(srgb, qn("a:alpha"))
+        alpha.set("val", "35000")  # subtle
+    except Exception:
+        pass
+
+    if not tf.paragraphs:
+        return
+    # Collapse to one clean paragraph for typing/paste.
+    para = tf.paragraphs[0]
+    para.alignment = PP_ALIGN.CENTER
+    current = tf.text.strip()
+    keep = current if current and current != AGENDA_NOTE_PLACEHOLDER else placeholder
+    if para.runs:
+        para.runs[0].text = keep
+        for run in para.runs[1:]:
+            run.text = ""
+        run = para.runs[0]
+    else:
+        run = para.add_run()
+        run.text = keep
+    run.font.size = Pt(11)
+    run.font.bold = False
+    run.font.color.rgb = RGBColor(255, 255, 255)
+    for extra in tf.paragraphs[1:]:
+        for run in extra.runs:
+            run.text = ""
+
+
 def _ensure_agenda_line_textboxes(slide) -> int:
-    """Create editable text boxes in the gaps between white lines in each chevron.
-
-    Returns the number of text boxes added. Existing non-empty boxes are left alone
-    so users can type or paste discussion notes into each line slot.
-    """
-    from pptx.dml.color import RGBColor
-    from pptx.enum.text import PP_ALIGN
-    from pptx.util import Emu, Pt
-
-    added = 0
+    """Put one clickable note text box in each white-line gap of every chevron."""
+    built = 0
     chevrons = _agenda_chevrons(slide)
+
+    # Remove empty oversized body boxes that span multiple slots (they block editing).
     for chevron in chevrons:
         lines = _agenda_divider_lines(slide, chevron)
         if len(lines) < 2:
-            # Fallback: three evenly spaced editable slots in the chevron body.
+            continue
+        avg_slot = (lines[-1] - lines[0]) / max(1, len(lines) - 1)
+        col_left = int(chevron.left)
+        col_right = col_left + int(chevron.width)
+        for shape in list(slide.shapes):
+            if not shape.has_text_frame:
+                continue
+            mid_x = int(shape.left) + int(shape.width) // 2
+            if not (col_left - 40_000 <= mid_x <= col_right + 40_000):
+                continue
+            top = int(shape.top)
+            if top < 2_150_000 or top > 3_900_000:
+                continue
+            # Empty and taller than ~1.5 slots → remove so we can place clean boxes.
+            if shape.text_frame.text.strip():
+                continue
+            if int(shape.height) > avg_slot * 1.4:
+                _remove_shape(shape)
+
+    for chevron in chevrons:
+        lines = _agenda_divider_lines(slide, chevron)
+        if len(lines) < 2:
             body_top = int(chevron.top) + int(chevron.height) * 28 // 100
             body_bottom = int(chevron.top) + int(chevron.height) * 88 // 100
             step = max(1, (body_bottom - body_top) // 3)
             lines = [body_top + i * step for i in range(4)]
             lines[-1] = body_bottom
 
-        col_left = int(chevron.left) + 40_000
-        col_width = max(200_000, int(chevron.width) - 80_000)
+        col_left = int(chevron.left) + 50_000
+        col_width = max(200_000, int(chevron.width) - 100_000)
 
         for idx in range(len(lines) - 1):
-            slot_top = lines[idx] + 20_000
-            slot_bottom = lines[idx + 1] - 20_000
-            if slot_bottom - slot_top < 80_000:
+            slot_top = lines[idx] + 25_000
+            slot_bottom = lines[idx + 1] - 25_000
+            if slot_bottom - slot_top < 90_000:
                 continue
-            slot_mid = (slot_top + slot_bottom) // 2
 
-            # Already have a text box whose vertical center sits in this slot?
-            occupied = False
+            existing = None
             for shape in slide.shapes:
                 if not shape.has_text_frame:
                     continue
@@ -202,71 +277,34 @@ def _ensure_agenda_line_textboxes(slide) -> int:
                 mid_y = int(shape.top) + int(shape.height) // 2
                 if not (col_left - 60_000 <= mid_x <= col_left + col_width + 60_000):
                     continue
-                if slot_top <= mid_y <= slot_bottom:
-                    occupied = True
-                    # Keep an empty single-run structure so paste/typing works.
-                    if not shape.text_frame.text.strip():
-                        tf = shape.text_frame
-                        tf.word_wrap = True
-                        try:
-                            tf.auto_size = None
-                        except Exception:
-                            pass
-                        if not tf.paragraphs:
-                            continue
-                        para = tf.paragraphs[0]
-                        para.alignment = PP_ALIGN.CENTER
-                        if not para.runs:
-                            run = para.add_run()
-                            run.text = ""
-                            run.font.size = Pt(10)
-                            run.font.bold = False
-                            run.font.color.rgb = RGBColor(255, 255, 255)
+                if slot_top <= mid_y <= slot_bottom and int(shape.height) < (slot_bottom - slot_top) * 1.6:
+                    existing = shape
                     break
-            if occupied:
-                continue
 
-            box = slide.shapes.add_textbox(
-                Emu(col_left),
-                Emu(slot_top),
-                Emu(col_width),
-                Emu(slot_bottom - slot_top),
-            )
-            box.name = f"AgendaNote_{added + 1}"
-            tf = box.text_frame
-            tf.word_wrap = True
-            try:
-                tf.auto_size = None
-            except Exception:
-                pass
-            try:
-                tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-            except Exception:
-                pass
-            para = tf.paragraphs[0]
-            run = para.add_run() if not para.runs else para.runs[0]
-            run.text = ""
-            run.font.size = Pt(10)
-            run.font.bold = False
-            try:
-                run.font.color.rgb = RGBColor(255, 255, 255)
-            except Exception:
-                pass
-            # Prefer middle vertical alignment when the XML bodyPr is available.
-            try:
-                box.text_frame._txBody.bodyPr.set("anchor", "ctr")  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            added += 1
-    return added
+            if existing is None:
+                existing = slide.shapes.add_textbox(
+                    Emu(col_left),
+                    Emu(slot_top),
+                    Emu(col_width),
+                    Emu(slot_bottom - slot_top),
+                )
+                existing.name = f"AgendaNote_{built + 1}"
+                built += 1
+            else:
+                # Resize into the slot so it sits cleanly between the white lines.
+                existing.left = Emu(col_left)
+                existing.top = Emu(slot_top)
+                existing.width = Emu(col_width)
+                existing.height = Emu(slot_bottom - slot_top)
+
+            _style_agenda_note_box(existing)
+            _bring_to_front(slide, existing)
+
+    return built
 
 
 def fill_agenda_slide(slide) -> None:
-    """Restore Planned Discussion titles, times, and editable line text boxes.
-
-    Matches the template chevron layout: numbered topics, time ovals, and empty
-    white-line slots where discussion notes can be typed or pasted.
-    """
+    """Restore Planned Discussion titles, times, and visible editable line notes."""
     title_boxes = [
         shape
         for shape in slide.shapes
@@ -284,30 +322,18 @@ def fill_agenda_slide(slide) -> None:
     title_boxes.sort(key=lambda s: int(s.left))
     time_ovals.sort(key=lambda s: int(s.left))
 
-    if len(title_boxes) < len(AGENDA_TOPICS):
-        logger.warning(
-            "Agenda slide: expected %s topic title boxes, found %s",
-            len(AGENDA_TOPICS),
-            len(title_boxes),
-        )
-    if len(time_ovals) < len(AGENDA_TOPICS):
-        logger.warning(
-            "Agenda slide: expected %s time ovals, found %s",
-            len(AGENDA_TOPICS),
-            len(time_ovals),
-        )
-
     for idx, (topic, minutes) in enumerate(AGENDA_TOPICS):
         if idx < len(title_boxes):
             set_text_frame_preserve(title_boxes[idx].text_frame, topic)
+            _bring_to_front(slide, title_boxes[idx])
         if idx < len(time_ovals):
             set_text_frame_preserve(time_ovals[idx].text_frame, minutes)
 
-    added = _ensure_agenda_line_textboxes(slide)
+    built = _ensure_agenda_line_textboxes(slide)
     logger.info(
-        "Filled Planned Discussion agenda (%s topics, +%s line textboxes)",
+        "Planned Discussion ready: %s topics, %s editable note slots between white lines",
         len(AGENDA_TOPICS),
-        added,
+        built,
     )
 
 
@@ -607,7 +633,6 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
 def _apply_slide_spec(slide, data: MprData, config: dict, slide_spec: dict) -> None:
     """Apply mapped updates while preserving the rest of the template slide."""
-    # Never wipe template chrome. Only touch mapped elements.
     for element in slide_spec.get("elements", []):
         _apply_element(slide, data, config, element)
 
@@ -640,6 +665,38 @@ def _load_template(config: dict, base_dir: Path) -> Presentation:
     return Presentation(str(template_path))
 
 
+def _verify_output(prs: Presentation) -> None:
+    """Log clear pass/fail checks so a bad build is obvious in the console."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    if len(prs.slides) < 4:
+        logger.error("Output has only %s slides — template looks incomplete", len(prs.slides))
+        return
+
+    agenda = prs.slides[1]
+    note_slots = sum(
+        1
+        for s in agenda.shapes
+        if s.has_text_frame
+        and 2_150_000 <= int(s.top) <= 3_900_000
+        and AGENDA_NOTE_PLACEHOLDER in (s.text_frame.text or "")
+    )
+    print(f"\nVERIFY slide 2 (agenda): {note_slots} visible note slots with placeholders")
+    if note_slots < 20:
+        logger.warning("Agenda note slots look incomplete (%s) — expected ~27", note_slots)
+
+    for idx, label in ((2, "slide 3 System"), (3, "slide 4 System")):
+        slide = prs.slides[idx]
+        pics = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+        print(f"VERIFY {label}: {len(pics)} picture(s)")
+        if not pics:
+            logger.error(
+                "%s has NO screenshot picture — System capture failed. "
+                "Run: python scripts\\inspect_scorecard_system.py --dump-left",
+                label,
+            )
+
+
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
     ppt_cfg = config["powerpoint"]
     month_name = date(data.year, data.month, 1).strftime("%B")
@@ -670,6 +727,8 @@ def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
         if prs.slides:
             replace_month_tokens_on_slide(prs.slides[0], data)
 
+    _verify_output(prs)
     prs.save(output_path)
     logger.info("Saved report: %s", output_path)
+    print(f"\n>>> Open this file to review changes:\n>>> {output_path}\n")
     return output_path

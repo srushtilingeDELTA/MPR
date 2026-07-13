@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.08-full-template"
+SCRIPT_VERSION = "2026.07.13-visible-agenda-system"
 
 import logging
 from pathlib import Path
@@ -31,6 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def main() -> None:
+    print(f"\nGSE MPR Report Generator  [{SCRIPT_VERSION}]\n")
     config = load_config(base_dir=BASE_DIR)
     report_cfg = config.get("report", {})
     use_previous = parse_bool(report_cfg.get("use_previous_month"), default=True)
