@@ -31,11 +31,11 @@ DEFAULT_HEIGHT = 5900000
 
 @dataclass
 class Section:
-    """One visual block on the System scorecard sheet."""
+    """One category block on the System scorecard (e.g. Safety & Security)."""
 
     index: int
     title: str
-    start_row: int  # 1-based inclusive
+    start_row: int  # 1-based inclusive (category body start)
     end_row: int  # 1-based inclusive
     start_col: int  # 1-based inclusive
     end_col: int  # 1-based inclusive
@@ -47,6 +47,65 @@ class Section:
             f"{get_column_letter(self.start_col)}{self.start_row}:"
             f"{get_column_letter(self.end_col)}{self.end_row}"
         )
+
+
+@dataclass
+class SystemLayout:
+    """Detected System sheet layout: shared month header + category sections."""
+
+    header_start_row: int
+    header_end_row: int
+    start_col: int
+    end_col: int
+    sections: list[Section]
+
+    def capture_bounds_for(self, sections: list[Section]) -> tuple[int, int, int, int]:
+        """Body bounds for selected sections (header handled separately when needed)."""
+        if not sections:
+            return self.header_start_row, self.header_end_row, self.start_col, self.end_col
+        return (
+            min(s.start_row for s in sections),
+            max(s.end_row for s in sections),
+            self.start_col,
+            self.end_col,
+        )
+
+    def needs_header_stitch(self, sections: list[Section]) -> bool:
+        """True when selected body does not sit directly under the month header."""
+        if not sections:
+            return False
+        body_start = min(s.start_row for s in sections)
+        return body_start > self.header_end_row + 1
+
+
+MONTH_HEADER_TOKENS = {
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "SEPT",
+    "OCT",
+    "NOV",
+    "DEC",
+    "YTD",
+    "YE",
+    "JANUARY",
+    "FEBRUARY",
+    "MARCH",
+    "APRIL",
+    "JUNE",
+    "JULY",
+    "AUGUST",
+    "SEPTEMBER",
+    "OCTOBER",
+    "NOVEMBER",
+    "DECEMBER",
+}
 
 
 def _theme_rgb(theme: int | None, tint: float | None = None) -> tuple[int, int, int] | None:
@@ -164,62 +223,141 @@ def _used_bounds(ws: Worksheet) -> tuple[int, int, int, int]:
     return min_row, max_row, min_col, max_col
 
 
-def _row_fill_ratio(ws: Worksheet, row: int, min_col: int, max_col: int) -> tuple[float, int, int]:
-    """Return (dark_ratio_among_filled, filled_count, dark_count)."""
-    filled = 0
-    dark = 0
-    for col in range(min_col, max_col + 1):
-        rgb = _fill_rgb(ws.cell(row, col))
-        if rgb is None:
-            continue
-        filled += 1
-        if _is_dark(rgb):
-            dark += 1
-    if filled == 0:
-        return 0.0, 0, 0
-    return dark / filled, filled, dark
+def _normalize_month_token(text: str) -> str:
+    cleaned = "".join(ch for ch in text.upper() if ch.isalpha())
+    return cleaned
 
 
-def _row_is_section_header(ws: Worksheet, row: int, min_col: int, max_col: int) -> bool:
-    """Section banners: colored bar across many columns, often merged, with a short title."""
-    width = max_col - min_col + 1
-    dark_ratio, filled, dark = _row_fill_ratio(ws, row, min_col, max_col)
-    fill_coverage = filled / max(width, 1)
+def _find_month_header_row(ws: Worksheet, min_row: int, max_row: int, min_col: int, max_col: int) -> int | None:
+    """Locate the JAN..DEC / YTD / YE header row used by the System scorecard."""
+    best_row = None
+    best_hits = 0
+    for row in range(min_row, min(max_row, min_row + 40) + 1):
+        hits = 0
+        for col in range(min_col, max_col + 1):
+            token = _normalize_month_token(_cell_text(ws.cell(row, col)))
+            if not token:
+                continue
+            if token in MONTH_HEADER_TOKENS or token[:3] in MONTH_HEADER_TOKENS:
+                hits += 1
+        if hits > best_hits:
+            best_hits = hits
+            best_row = row
+    if best_hits >= 6:
+        return best_row
+    return None
 
-    title = ""
-    title_col = min_col
-    for col in range(min_col, max_col + 1):
-        title = _cell_text(ws.cell(row, col))
-        if title:
-            title_col = col
-            break
-    if not title or len(title) > 80:
-        return False
 
-    non_empty = sum(1 for c in range(min_col, max_col + 1) if _cell_text(ws.cell(row, c)))
-    merged_banner = False
+def _header_band(ws: Worksheet, month_row: int, min_col: int, max_col: int, first_section_row: int) -> tuple[int, int]:
+    """Include month labels plus any WEIGHT/KPI label rows above the first category."""
+    start = month_row
+    # Pull in a title/spacer row immediately above months if present.
+    if month_row > 1 and _row_has_content(ws, month_row - 1, min_col, max_col):
+        start = month_row - 1
+    end = max(month_row, first_section_row - 1)
+    # Keep WEIGHT / KPI / TOTAL SCORE row(s) that sit between months and the first KPI body.
+    for row in range(month_row, first_section_row):
+        texts = " ".join(_cell_text(ws.cell(row, c)).casefold() for c in range(min_col, max_col + 1))
+        if "weight" in texts or "kpi" in texts or "total score" in texts:
+            end = max(end, row)
+    return start, max(start, end)
+
+
+def _vertical_category_merges(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    """
+    Category sections are tall merged cells in the leftmost columns, e.g.
+    'Safety & Security (25.0%)' spanning many rows with a maroon/blue/orange fill.
+    Returns list of (start_row, end_row, title, is_black).
+    """
+    found: list[tuple[int, int, str, bool]] = []
     for merged in ws.merged_cells.ranges:
-        if merged.min_row == row == merged.max_row and merged.max_col - merged.min_col >= 2:
-            if merged.min_col <= title_col <= merged.max_col:
-                merged_banner = True
-                break
+        height = merged.max_row - merged.min_row + 1
+        width = merged.max_col - merged.min_col + 1
+        if height < 4 or width > 2:
+            continue
+        if merged.min_col > min_col + 1:
+            continue
+        if merged.max_row < min_row or merged.min_row > max_row:
+            continue
+        title = _cell_text(ws.cell(merged.min_row, merged.min_col))
+        if not title:
+            continue
+        rgb = _fill_rgb(ws.cell(merged.min_row, merged.min_col))
+        is_black = _is_dark(rgb)
+        found.append((merged.min_row, merged.max_row, title, is_black))
 
-    # Strong signal: wide colored banner with few text cells.
-    if fill_coverage >= 0.5 and non_empty <= 3:
-        return True
-    if merged_banner and (fill_coverage >= 0.2 or dark > 0):
-        return True
-    # Dark totals / black strip
-    if dark_ratio >= 0.5 and fill_coverage >= 0.4 and non_empty <= 3:
-        return True
-    return False
+    found.sort(key=lambda item: item[0])
+    return found
 
 
-def detect_system_sections(
+def _contiguous_left_fill_sections(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    """Fallback when categories are colored left-column blocks without merges."""
+    label_col = min_col
+    sections: list[tuple[int, int, str, bool]] = []
+    current_start = None
+    current_title = ""
+    current_rgb = None
+    current_black = False
+
+    def close(end_row: int) -> None:
+        nonlocal current_start, current_title, current_rgb, current_black
+        if current_start is None:
+            return
+        sections.append((current_start, end_row, current_title or f"Section {len(sections) + 1}", current_black))
+        current_start = None
+        current_title = ""
+        current_rgb = None
+        current_black = False
+
+    for row in range(min_row, max_row + 1):
+        cell = ws.cell(row, label_col)
+        text = _cell_text(cell)
+        rgb = _fill_rgb(cell)
+        # Prefer a filled label cell; also accept text-only category starts.
+        is_label = bool(text) and (
+            rgb is not None
+            or any(token in text.casefold() for token in ("safety", "customer", "operations", "people", "finance", "financial", "quality", "summary", "total"))
+        )
+        if is_label and (current_start is None or text != current_title):
+            if current_start is not None:
+                close(row - 1)
+            current_start = row
+            current_title = text
+            current_rgb = rgb
+            current_black = _is_dark(rgb)
+            continue
+        if current_start is not None and rgb is not None and current_rgb is not None and rgb != current_rgb and text:
+            close(row - 1)
+            current_start = row
+            current_title = text
+            current_rgb = rgb
+            current_black = _is_dark(rgb)
+
+    if current_start is not None:
+        close(max_row)
+    return sections
+
+
+def detect_system_layout(
     workbook_bytes: bytes,
     sheet_name: str = "System",
-) -> list[Section]:
-    """Split the System sheet into visual sections (tables / banners)."""
+) -> SystemLayout:
+    """
+    Parse the System scorecard layout matching the live GSE file:
+    month header (JAN..YE) + vertical category bars on the left.
+    """
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=True)
     if sheet_name not in wb.sheetnames:
         match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), None)
@@ -229,73 +367,71 @@ def detect_system_sections(
     ws = wb[sheet_name]
     min_row, max_row, min_col, max_col = _used_bounds(ws)
 
-    header_rows = [
-        r for r in range(min_row, max_row + 1) if _row_is_section_header(ws, r, min_col, max_col)
-    ]
+    month_row = _find_month_header_row(ws, min_row, max_row, min_col, max_col)
+    body_start = (month_row + 1) if month_row else min_row
 
-    # Fallback: split on blank-row gaps when banners are not styled.
-    if len(header_rows) < 2:
-        header_rows = []
-        blank_run = 0
-        started = False
-        for r in range(min_row, max_row + 1):
-            if _row_has_content(ws, r, min_col, max_col):
-                if not started or blank_run >= 2:
-                    header_rows.append(r)
-                    started = True
-                blank_run = 0
-            else:
-                blank_run += 1
-        if not header_rows:
-            header_rows = [min_row]
+    raw_sections = _vertical_category_merges(ws, body_start, max_row, min_col, max_col)
+    if len(raw_sections) < 2:
+        raw_sections = _contiguous_left_fill_sections(ws, body_start, max_row, min_col, max_col)
 
-    header_rows = sorted(set(header_rows))
-    sections: list[Section] = []
-    for idx, start in enumerate(header_rows):
-        end = header_rows[idx + 1] - 1 if idx + 1 < len(header_rows) else max_row
+    if not raw_sections:
+        # Last resort: treat whole body as one section.
+        raw_sections = [(body_start, max_row, "System", False)]
+
+    # Extend each section to the row before the next category starts.
+    normalized: list[tuple[int, int, str, bool]] = []
+    for idx, (start, end, title, is_black) in enumerate(raw_sections):
+        next_start = raw_sections[idx + 1][0] if idx + 1 < len(raw_sections) else max_row + 1
+        end = max(end, next_start - 1)
         while end > start and not _row_has_content(ws, end, min_col, max_col):
             end -= 1
-        title = ""
-        for col in range(min_col, max_col + 1):
-            title = _cell_text(ws.cell(start, col))
-            if title:
-                break
+        normalized.append((start, end, title, is_black))
 
-        # Black section = dark banner row (or mostly dark fills in the first rows).
-        dark_ratio, filled, _dark = _row_fill_ratio(ws, start, min_col, max_col)
-        is_black = filled > 0 and dark_ratio >= 0.45
-        if not is_black:
-            dark_cells = 0
-            checked = 0
-            for r in range(start, min(start + 2, end + 1)):
-                for c in range(min_col, max_col + 1):
-                    rgb = _fill_rgb(ws.cell(r, c))
-                    if rgb is None:
-                        continue
-                    checked += 1
-                    if _is_dark(rgb):
-                        dark_cells += 1
-            is_black = checked > 0 and dark_cells / checked >= 0.45
+    first_section_row = normalized[0][0]
+    if month_row:
+        header_start, header_end = _header_band(ws, month_row, min_col, max_col, first_section_row)
+    else:
+        header_start = min_row
+        header_end = max(min_row, first_section_row - 1)
 
-        sections.append(
-            Section(
-                index=idx,
-                title=title or f"Section {idx + 1}",
-                start_row=start,
-                end_row=end,
-                start_col=min_col,
-                end_col=max_col,
-                is_black=is_black,
-            )
+    sections = [
+        Section(
+            index=idx,
+            title=title,
+            start_row=start,
+            end_row=end,
+            start_col=min_col,
+            end_col=max_col,
+            is_black=is_black,
         )
+        for idx, (start, end, title, is_black) in enumerate(normalized)
+    ]
 
+    layout = SystemLayout(
+        header_start_row=header_start,
+        header_end_row=header_end,
+        start_col=min_col,
+        end_col=max_col,
+        sections=sections,
+    )
     wb.close()
     logger.info(
-        "Detected %s System sections: %s",
-        len(sections),
-        [(s.index, s.title, s.range_address, s.is_black) for s in sections],
+        "System layout: header rows %s-%s cols %s-%s; sections=%s",
+        layout.header_start_row,
+        layout.header_end_row,
+        get_column_letter(layout.start_col),
+        get_column_letter(layout.end_col),
+        [(s.index, s.title, f"R{s.start_row}-{s.end_row}", s.is_black) for s in sections],
     )
-    return sections
+    return layout
+
+
+def detect_system_sections(
+    workbook_bytes: bytes,
+    sheet_name: str = "System",
+) -> list[Section]:
+    """Backward-compatible helper returning only category sections."""
+    return detect_system_layout(workbook_bytes, sheet_name=sheet_name).sections
 
 
 def select_sections_for_slide(
@@ -442,7 +578,7 @@ def _capture_via_render(
                 text_rgb = _color_rgb(cell.font.color) if cell.font and cell.font.color else None
                 if text_rgb is None:
                     text_rgb = (255, 255, 255) if _is_dark(fill) else (20, 20, 20)
-                use_font = bold if (cell.font and cell.font.bold) or _row_is_section_header(ws, r, start_col, end_col) else font
+                use_font = bold if (cell.font and cell.font.bold) else font
                 draw.text((x + 4, y + max(2, (rh - 14) // 2)), text[:60], fill=text_rgb, font=use_font)
             x += cw
         y += rh
@@ -481,25 +617,70 @@ def capture_range_png(
     return png
 
 
+def _stitch_vertical(top_png: bytes, bottom_png: bytes) -> bytes:
+    """Stack two PNGs so slide 4 keeps the month header without earlier sections."""
+    top = Image.open(io.BytesIO(top_png)).convert("RGB")
+    bottom = Image.open(io.BytesIO(bottom_png)).convert("RGB")
+    width = max(top.width, bottom.width)
+    image = Image.new("RGB", (width, top.height + bottom.height), (255, 255, 255))
+    image.paste(top, (0, 0))
+    image.paste(bottom, (0, top.height))
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def capture_sections_png(
     workbook_bytes: bytes,
     sheet_name: str,
     sections: list[Section],
     *,
+    layout: SystemLayout | None = None,
     prefer_excel_com: bool = True,
 ) -> bytes | None:
+    """
+    Screenshot the System scorecard like the live Excel view:
+    month header (JAN..YE) + selected vertical category blocks as one image.
+    """
     if not sections:
         return None
-    start_row, end_row, start_col, end_col = _combine_range(sections)
-    return capture_range_png(
+    if layout is None:
+        layout = detect_system_layout(workbook_bytes, sheet_name=sheet_name)
+
+    body_start, body_end, start_col, end_col = layout.capture_bounds_for(sections)
+
+    # First N sections: one contiguous CopyPicture range (matches the provided screenshot).
+    if not layout.needs_header_stitch(sections):
+        return capture_range_png(
+            workbook_bytes,
+            sheet_name,
+            layout.header_start_row,
+            body_end,
+            start_col,
+            end_col,
+            prefer_excel_com=prefer_excel_com,
+        )
+
+    # Later sections: capture header + body separately, then stitch.
+    header_png = capture_range_png(
         workbook_bytes,
         sheet_name,
-        start_row,
-        end_row,
+        layout.header_start_row,
+        layout.header_end_row,
         start_col,
         end_col,
         prefer_excel_com=prefer_excel_com,
     )
+    body_png = capture_range_png(
+        workbook_bytes,
+        sheet_name,
+        body_start,
+        body_end,
+        start_col,
+        end_col,
+        prefer_excel_com=prefer_excel_com,
+    )
+    return _stitch_vertical(header_png, body_png)
 
 
 def place_picture_on_slide(
@@ -511,7 +692,7 @@ def place_picture_on_slide(
     max_width: int = DEFAULT_WIDTH,
     max_height: int = DEFAULT_HEIGHT,
 ) -> None:
-    """Add a PNG centered in the content area, preserving aspect ratio."""
+    """Add a PNG fitted into the content area, preserving aspect ratio."""
     from pptx.util import Emu
 
     with Image.open(io.BytesIO(png_bytes)) as img:
@@ -519,11 +700,12 @@ def place_picture_on_slide(
     if img_w <= 0 or img_h <= 0:
         return
 
+    # Prefer width-fill for wide scorecard grids like the System tab.
     scale = min(max_width / img_w, max_height / img_h)
     width = int(img_w * scale)
     height = int(img_h * scale)
     left_pos = left + max(0, (max_width - width) // 2)
-    top_pos = top + max(0, (max_height - height) // 2)
+    top_pos = top
     slide.shapes.add_picture(io.BytesIO(png_bytes), Emu(left_pos), Emu(top_pos), Emu(width), Emu(height))
 
 
@@ -543,13 +725,13 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         return False
 
     try:
-        sections = detect_system_sections(workbook_bytes, sheet_name=sheet_name)
+        layout = detect_system_layout(workbook_bytes, sheet_name=sheet_name)
     except Exception as exc:
-        logger.warning("Could not detect System sections: %s", exc)
+        logger.warning("Could not detect System layout: %s", exc)
         return False
 
     chosen = select_sections_for_slide(
-        sections,
+        layout.sections,
         mode=mode,
         count=count,
         include_black=include_black,
@@ -578,6 +760,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
             workbook_bytes,
             sheet_name,
             chosen,
+            layout=layout,
             prefer_excel_com=prefer_com,
         )
     if not png:
@@ -591,9 +774,18 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         max_width=int(element.get("max_width", DEFAULT_WIDTH)),
         max_height=int(element.get("max_height", DEFAULT_HEIGHT)),
     )
+    start_row, end_row, start_col, end_col = layout.capture_bounds_for(chosen)
+    if layout.needs_header_stitch(chosen):
+        range_desc = (
+            f"{_range_address(layout.header_start_row, layout.header_end_row, start_col, end_col)}"
+            f" + {_range_address(start_row, end_row, start_col, end_col)}"
+        )
+    else:
+        range_desc = _range_address(layout.header_start_row, end_row, start_col, end_col)
     logger.info(
-        "Placed System scorecard image on slide (%s section(s): %s)",
-        len(chosen),
+        "Placed System scorecard image (%s!%s) sections=%s",
+        sheet_name,
+        range_desc,
         [s.title for s in chosen],
     )
     return True

@@ -75,8 +75,8 @@ python main.py
 | Slide | Content updated from Excel |
 |-------|----------------------------|
 | 0 | Report month text (e.g. May 2026) |
-| 2 | System Scorecard (PPT slide 3): first 3 sections from Scorecards → System tab |
-| 3 | System Scorecard (PPT slide 4): last 2 sections + black section from System tab |
+| 2 | System Scorecard (PPT slide 3): JAN..YE header + first 3 category blocks (Safety, Customer, Operations) |
+| 3 | System Scorecard (PPT slide 4): JAN..YE header + last 2 category blocks + black/total section |
 | 4 | GIR tables + monthly trend chart |
 | 6 | People scorecard table (where KPIs match) |
 | 10 | PMI Motorized / Stationary charts |
@@ -99,6 +99,7 @@ MPR/
 ├── main.py
 ├── mpr_data.py          # reads May Actuals + other month sheets
 ├── ppt_builder.py       # fills template tables/charts/text
+├── scorecard_screenshots.py  # System tab screenshots → slides 3/4
 ├── report_utils.py
 ├── config.yaml
 ├── data/                # Excel (local only)
@@ -106,6 +107,7 @@ MPR/
 ├── output/              # generated reports
 └── scripts/
     ├── inspect_kpis.py      # list KPI names in Excel
+    ├── inspect_scorecard_system.py  # list System tab sections
     ├── inspect_template.py  # list slides/tables/charts in template
     ├── verify_setup.py
     ├── sync_sharepoint_files.py   # one Edge login, all sharepoint.files
