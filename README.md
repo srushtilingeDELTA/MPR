@@ -75,6 +75,8 @@ python main.py
 | Slide | Content updated from Excel |
 |-------|----------------------------|
 | 0 | Report month text (e.g. May 2026) |
+| 2 | System Scorecard (PPT slide 3): first 3 sections from Scorecards → System tab |
+| 3 | System Scorecard (PPT slide 4): last 2 sections + black section from System tab |
 | 4 | GIR tables + monthly trend chart |
 | 6 | People scorecard table (where KPIs match) |
 | 10 | PMI Motorized / Stationary charts |
@@ -82,7 +84,13 @@ python main.py
 | 19 | Jam Rate / Clear Times charts |
 | 21 | VOS chart |
 
-**Scorecard summary slides** (pictures on slides 2–3, 13–18, 23–24) are still images from the template. Updating those requires mapping Excel ranges to images (next phase).
+**Other scorecard image slides** (13–18, 23–24) are still images from the template. Updating those requires the same screenshot approach per entity tab (next phase).
+
+On Windows with Excel installed, System screenshots use Excel **CopyPicture** (true screenshots). Elsewhere, tables are rendered with Pillow as a fallback.
+
+```powershell
+python scripts\inspect_scorecard_system.py   # see detected System sections
+```
 
 ## Project files
 

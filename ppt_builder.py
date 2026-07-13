@@ -350,6 +350,12 @@ def apply_scorecard_sheet(slide, data: MprData, element: dict) -> bool:
     return False
 
 
+def apply_scorecard_screenshot_element(slide, data: MprData, element: dict) -> bool:
+    from scorecard_screenshots import apply_scorecard_screenshot
+
+    return apply_scorecard_screenshot(slide, data, element)
+
+
 def apply_workings_table(slide, data: MprData, element: dict) -> bool:
     workbook = element["workbook"]
     sheet = element.get("sheet")
@@ -389,6 +395,10 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
         if not apply_scorecard_sheet(slide, data, element):
             if not element.get("optional", False):
                 logger.warning("No scorecard data for slide element %s", element)
+    elif etype == "scorecard_screenshot":
+        if not apply_scorecard_screenshot_element(slide, data, element):
+            if not element.get("optional", False):
+                logger.warning("No System scorecard screenshot for element %s", element)
     elif etype == "workings_table":
         if not apply_workings_table(slide, data, element):
             if not element.get("optional", False):

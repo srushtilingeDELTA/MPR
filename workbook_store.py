@@ -19,6 +19,7 @@ class WorkbookStore:
         self.base_dir = base_dir
         self._files: dict[str, pd.ExcelFile] = {}
         self._sheet_cache: dict[tuple[str, str], pd.DataFrame] = {}
+        self._raw_bytes: dict[str, bytes] = {}
 
     def _workbook_defs(self) -> dict:
         defs = self.config.get("workbooks")
@@ -54,9 +55,28 @@ class WorkbookStore:
     def load(self) -> None:
         for name, wb_cfg in self._workbook_defs().items():
             rel_path = wb_cfg["path"]
-            data = self._bytes_for_path(rel_path)
+            try:
+                data = self._bytes_for_path(rel_path)
+            except FileNotFoundError:
+                if wb_cfg.get("optional"):
+                    logger.info("Optional workbook %r not found (%s); skipping", name, rel_path)
+                    continue
+                raise
+            self._raw_bytes[name] = data
             self._files[name] = pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
             logger.info("Loaded workbook %r (%s bytes, %s sheets)", name, len(data), len(self._files[name].sheet_names))
+
+    def workbook_bytes(self, workbook: str) -> bytes:
+        """Return raw workbook bytes (for Excel COM / openpyxl screenshot capture)."""
+        raw = self._raw_bytes.get(workbook)
+        if raw:
+            return raw
+        wb_cfg = self._workbook_defs().get(workbook)
+        if not wb_cfg:
+            raise FileNotFoundError(f"Unknown workbook key: {workbook!r}")
+        data = self._bytes_for_path(wb_cfg["path"])
+        self._raw_bytes[workbook] = data
+        return data
 
     def sheet_names(self, workbook: str) -> list[str]:
         xl = self._files.get(workbook)

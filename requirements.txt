@@ -4,3 +4,6 @@ selenium>=4.15.0
 webdriver-manager>=4.0.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
+pillow>=10.0.0
+# Windows only — enables true Excel CopyPicture screenshots for System scorecards
+pywin32>=306; platform_system=="Windows"
