@@ -27,11 +27,12 @@ from scorecard_screenshots import (
 
 logger = logging.getLogger(__name__)
 
-# Exact template OLE Object 2 slot on slide 6 (EMU).
-EA_CONTENT_LEFT = 314_628
-EA_CONTENT_TOP = 916_047
-EA_CONTENT_WIDTH = 7_924_800
-EA_CONTENT_HEIGHT = 3_702_050
+# Left content slot on slide 6 — larger than the template OLE so the table reads clearly,
+# while staying left of Leading Issues (~8.42M) and above the footer logo (~6.35M).
+EA_CONTENT_LEFT = 260_000
+EA_CONTENT_TOP = 820_000
+EA_CONTENT_WIDTH = 8_050_000
+EA_CONTENT_HEIGHT = 4_650_000
 
 # Prefer a single sheet that already hosts the combined table.
 PREFERRED_SHEET_MATCHES = [

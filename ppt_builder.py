@@ -925,16 +925,10 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 6 EA/ASAP still has %s embedded OLE object(s)", len(ea_ole))
     if ea_pics:
         pic = ea_pics[0]
-        # Should roughly fill the template OLE rectangle.
-        if abs(int(pic.left) - 314_628) > 80_000 or abs(int(pic.top) - 916_047) > 80_000:
+        # Should fill the enlarged left content slot (bigger than original OLE).
+        if int(pic.width) < 7_500_000 or int(pic.height) < 4_000_000:
             logger.warning(
-                "Slide 6 EA/ASAP image not in template OLE slot (L=%s T=%s)",
-                int(pic.left),
-                int(pic.top),
-            )
-        if int(pic.width) < 7_000_000 or int(pic.height) < 3_200_000:
-            logger.warning(
-                "Slide 6 EA/ASAP image smaller than template OLE slot (W=%s H=%s)",
+                "Slide 6 EA/ASAP image smaller than expected slot (W=%s H=%s)",
                 int(pic.width),
                 int(pic.height),
             )
@@ -942,7 +936,7 @@ def _verify_output(prs: Presentation) -> None:
         bottom = int(pic.top) + int(pic.height)
         if right > 8_400_000:
             logger.warning("Slide 6 EA/ASAP image may overlap Leading Issues (right=%s)", right)
-        if bottom > 6_300_000:
+        if bottom > 6_200_000:
             logger.warning("Slide 6 EA/ASAP image may overlap footer logo (bottom=%s)", bottom)
     ea_textboxes = [
         s
