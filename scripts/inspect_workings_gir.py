@@ -61,10 +61,8 @@ def main() -> int:
             if shown >= 40:
                 break
     wb.close()
-    print("\nSlide 5 fills native PowerPoint tables/chart from Actuals.")
-    print("Injury Breakdown may be filled from Workings!GIR when that table parses cleanly.")
+    print("\nSlide 5 fills native PowerPoint tables/chart from Workings!GIR.")
     print("Leading Issues / Action Plan text boxes are cleared for manual entry.")
-    print("Screenshots are not used for GIR.")
     return 0
 
 

@@ -15,7 +15,7 @@ from workbook_store import WorkbookStore
 SUGGESTED = [
     (2, "System sections: Safety/Customer/Ops"),
     (3, "System sections: People/Finance/Overall"),
-    (4, "GIR native tables + chart from actuals"),
+    (4, "GIR native tables + chart from Workings!GIR"),
     (5, "EA / ASAP / Compliance sheet (optional)"),
     (7, "workings SCORECARD SUMMARIES / sheet 0 (finance overview)"),
     (13, "North summary"),

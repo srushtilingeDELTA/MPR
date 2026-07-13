@@ -328,10 +328,31 @@ def fill_agenda_slide(slide) -> None:
     )
 
 
-def _build_chart_data(actuals: list[float | None], goal: float | None, existing_chart) -> CategoryChartData:
-    ytd_vals = [v for v in actuals[:12] if _safe_number(v) is not None]
-    ytd = sum(ytd_vals) / len(ytd_vals) if ytd_vals else None
+def _build_chart_data(
+    actuals: list[float | None],
+    goal: float | None,
+    existing_chart,
+    *,
+    ytd: float | None = None,
+    prior_year: list[float | None] | None = None,
+    prior_ytd: float | None = None,
+) -> CategoryChartData:
+    """Build chart categories Jan-Dec + YTD.
+
+    GIR YTD must come from Workings (weighted rate) — never a simple monthly average.
+    """
+    if ytd is None:
+        # Prefer an explicit 13th value if caller already included it.
+        if len(actuals) >= 13 and _safe_number(actuals[12]) is not None:
+            ytd = actuals[12]
     full_actuals = list(actuals[:12]) + [ytd]
+
+    prior_full = None
+    if prior_year is not None:
+        prior_full = list(prior_year[:12])
+        while len(prior_full) < 12:
+            prior_full.append(None)
+        prior_full.append(prior_ytd)
 
     chart_data = CategoryChartData()
     chart_data.categories = CHART_CATEGORIES
@@ -340,30 +361,53 @@ def _build_chart_data(actuals: list[float | None], goal: float | None, existing_
         for series in existing_chart.series:
             name = series.name or ""
             lower = name.lower()
-            if lower in ("actual", "current year") or "actual" in lower:
-                chart_data.add_series(name, tuple(full_actuals))
+            if lower in ("actual", "current year") or "actual" in lower or "current" in lower:
+                chart_data.add_series(name or "Current Year", tuple(full_actuals))
             elif "goal" in lower:
-                chart_data.add_series(name, tuple([goal] * 13 if _safe_number(goal) is not None else [None] * 13))
+                chart_data.add_series(
+                    name or "Goal",
+                    tuple([goal] * 13 if _safe_number(goal) is not None else [None] * 13),
+                )
+            elif prior_full is not None and ("p1y" in lower or "prior" in lower):
+                chart_data.add_series(name or "P1Y", tuple(prior_full))
             else:
-                existing = list(series.values)
+                existing = list(series.values) if series.values is not None else []
                 while len(existing) < 13:
                     existing.append(None)
                 chart_data.add_series(name, tuple(existing[:13]))
     else:
-        chart_data.add_series("Actual", tuple(full_actuals))
+        chart_data.add_series("Current Year", tuple(full_actuals))
         if _safe_number(goal) is not None:
             chart_data.add_series("Goal", tuple([goal] * 13))
+        if prior_full is not None:
+            chart_data.add_series("P1Y", tuple(prior_full))
 
     return chart_data
 
 
-def _update_chart_series(slide, shape, actuals: list[float | None], goal: float | None) -> bool:
+def _update_chart_series(
+    slide,
+    shape,
+    actuals: list[float | None],
+    goal: float | None,
+    *,
+    ytd: float | None = None,
+    prior_year: list[float | None] | None = None,
+    prior_ytd: float | None = None,
+) -> bool:
     if not shape.has_chart:
         return False
     if not any(_safe_number(v) is not None for v in actuals):
         return False
 
-    chart_data = _build_chart_data(actuals, goal, shape.chart)
+    chart_data = _build_chart_data(
+        actuals,
+        goal,
+        shape.chart,
+        ytd=ytd,
+        prior_year=prior_year,
+        prior_ytd=prior_ytd,
+    )
     chart_title = ""
     chart_type = XL_CHART_TYPE.LINE_MARKERS
     if shape.has_chart:
@@ -384,6 +428,34 @@ def _update_chart_series(slide, shape, actuals: list[float | None], goal: float 
         if chart_title and new_shape.chart.has_title:
             set_text_frame_preserve(new_shape.chart.chart_title.text_frame, chart_title)
         return True
+
+
+def update_gir_chart_from_series(
+    slide,
+    *,
+    monthly: list[float | None],
+    goal: float | None,
+    ytd: float | None = None,
+    prior_year: list[float | None] | None = None,
+    prior_ytd: float | None = None,
+) -> bool:
+    """Update the System GIR chart from Workings series values."""
+    updated = False
+    for shape in list(slide.shapes):
+        if shape.has_chart:
+            if _update_chart_series(
+                slide,
+                shape,
+                monthly,
+                goal,
+                ytd=ytd,
+                prior_year=prior_year,
+                prior_ytd=prior_ytd,
+            ):
+                updated = True
+            else:
+                _remove_shape(shape)
+    return updated
 
 
 def _clear_non_title_content(slide, *, keep_title: bool = True) -> None:
@@ -517,13 +589,8 @@ def update_gir_charts(slide, data: MprData, config: dict, workbook: str) -> None
     gir_name = config.get("kpi_mappings", {}).get("gir", "GIR")
     monthly = data.monthly_series([gir_name], through_month=data.month, workbook=workbook)
     goal = data.kpi_value([gir_name], month=data.month, workbook=workbook).goal
-    for shape in list(slide.shapes):
-        if shape.has_chart:
-            if any(_safe_number(v) is not None for v in monthly):
-                _update_chart_series(slide, shape, monthly, goal)
-            else:
-                _remove_shape(shape)
-
+    ytd = data.ytd_value([gir_name], workbook=workbook)
+    update_gir_chart_from_series(slide, monthly=monthly, goal=goal, ytd=ytd)
 
 def update_people_table(slide, data: MprData, rows_cfg: list[dict], workbook: str) -> None:
     for shape in slide.shapes:
@@ -659,6 +726,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_gir_workings_panels(slide, data, element) and not optional:
             logger.warning("No GIR workings panels for element %s", element)
+    elif etype == "gir_workings_native":
+        from gir_workings import apply_gir_workings_native
+
+        if not apply_gir_workings_native(slide, data, element) and not optional:
+            logger.warning("No Workings GIR data for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
@@ -792,7 +864,7 @@ def _verify_output(prs: Presentation) -> None:
             except Exception as exc:
                 logger.warning("%s could not inspect image blob: %s", label, exc)
 
-    # GIR should keep native chart + tables (no stretched panel screenshots).
+    # GIR should keep native chart + tables filled from Workings!GIR.
     gir = prs.slides[4]
     gir_charts = sum(1 for s in gir.shapes if getattr(s, "has_chart", False))
     gir_tables = sum(1 for s in gir.shapes if getattr(s, "has_table", False))
@@ -804,6 +876,18 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 5 GIR expected a native chart, found %s", gir_charts)
     if gir_pics > 1:
         logger.warning("Slide 5 GIR has unexpected pictures (%s) — prefer native fills", gir_pics)
+    for shape in gir.shapes:
+        if not getattr(shape, "has_table", False):
+            continue
+        table = shape.table
+        label = (table.cell(0, 0).text or "").strip().casefold()
+        if label == "recordable" and len(table.rows) > 2:
+            inj = (table.cell(2, 2).text or "").strip()  # Feb injury count
+            if inj in ("", "0"):
+                logger.warning(
+                    "Slide 5 GIR Injury Count still looks empty/zero (expected Workings values)"
+                )
+            break
     narrative_left = [
         (s.text_frame.text or "").strip()
         for s in gir.shapes
@@ -813,7 +897,8 @@ def _verify_output(prs: Presentation) -> None:
     if leftover:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
     else:
-        print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")    # Slide 6 EA/ASAP narrative boxes should also be empty/editable text boxes.
+        print("VERIFY slide 5 GIR narrative: Leading Issues / Action Plan boxes are empty")
+    # Slide 6 EA/ASAP narrative boxes should also be empty/editable text boxes.
     ea = prs.slides[5]
     ea_textboxes = [
         s
