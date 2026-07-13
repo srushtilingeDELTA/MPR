@@ -17,6 +17,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from PIL import Image
 
+from lxml import etree
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.oxml.ns import qn
+from pptx.util import Emu, Pt
+
 from ppt_format import clear_text_frame_content, set_text_frame_preserve
 from scorecard_screenshots import (
     _find_sheet_name,
@@ -290,10 +295,147 @@ def _capture_block_png(
     )
 
 
+def _bring_shape_to_front(slide, shape) -> None:
+    tree = slide.shapes._spTree
+    element = shape._element
+    tree.remove(element)
+    tree.append(element)
+
+
+def _style_empty_narrative_textbox(box) -> None:
+    """Make a narrative body box an empty, clickable text field (no outline)."""
+    tf = box.text_frame
+    tf.word_wrap = True
+    try:
+        tf.auto_size = None
+    except Exception:
+        pass
+
+    # Collapse to a single empty paragraph so the box looks blank but remains editable.
+    try:
+        body = tf._txBody
+        paragraphs = body.findall(qn("a:p"))
+        for para_el in paragraphs[1:]:
+            body.remove(para_el)
+    except Exception:
+        pass
+
+    clear_text_frame_content(tf)
+    if tf.paragraphs:
+        para = tf.paragraphs[0]
+        if para.runs:
+            para.runs[0].text = ""
+            for run in para.runs[1:]:
+                run.text = ""
+            run = para.runs[0]
+        else:
+            run = para.add_run()
+            run.text = ""
+        if run.font.size is None:
+            run.font.size = Pt(11)
+
+    try:
+        sp_pr = box._element.spPr
+        for old in list(sp_pr.findall(qn("a:ln"))):
+            sp_pr.remove(old)
+        ln = etree.SubElement(sp_pr, qn("a:ln"))
+        ln.set("w", "0")
+        etree.SubElement(ln, qn("a:noFill"))
+    except Exception:
+        pass
+
+
+def _narrative_body_boxes(slide, headers: list) -> list:
+    """Find existing Leading Issues / Action Plan body text boxes."""
+    bodies = []
+    for shape in slide.shapes:
+        if not getattr(shape, "has_text_frame", False):
+            continue
+        if "textbox" not in (shape.name or "").casefold():
+            continue
+        text = (shape.text_frame.text or "").strip()
+        lower = text.casefold()
+        if "leading issue" in lower or lower.startswith("action plan"):
+            continue
+        if int(shape.height) < 500_000 or int(shape.top) < 800_000:
+            continue
+
+        mid_x = int(shape.left) + int(shape.width) // 2
+        near_header = False
+        for header in headers:
+            h_mid = int(header.left) + int(header.width) // 2
+            if abs(mid_x - h_mid) <= 2_200_000 and int(shape.top) > int(header.top) + 100_000:
+                near_header = True
+                break
+        if not near_header and not headers and int(shape.top) >= 4_850_000:
+            near_header = True
+        if near_header:
+            bodies.append(shape)
+    return bodies
+
+
+def _ensure_narrative_body_in_borders(slide, headers: list) -> list:
+    """If a red border box has no body text box, add an empty editable one inside it."""
+    created = []
+    if not headers:
+        return created
+
+    header_mids = [int(h.left) + int(h.width) // 2 for h in headers]
+    for shape in list(slide.shapes):
+        if shape.shape_type != MSO_SHAPE_TYPE.AUTO_SHAPE:
+            continue
+        name = (shape.name or "").casefold()
+        if "rectangle" not in name:
+            continue
+        # Body borders are tall; header bars are short.
+        if int(shape.height) < 900_000 or int(shape.width) < 2_000_000:
+            continue
+        mid_x = int(shape.left) + int(shape.width) // 2
+        if not any(abs(mid_x - hm) <= 2_200_000 for hm in header_mids):
+            continue
+        # Must sit below at least one narrative header.
+        if not any(int(shape.top) > int(h.top) + 100_000 for h in headers):
+            continue
+
+        # Already have a text box roughly inside this border?
+        has_body = False
+        for box in slide.shapes:
+            if not getattr(box, "has_text_frame", False):
+                continue
+            if "textbox" not in (box.name or "").casefold():
+                continue
+            b_mid_x = int(box.left) + int(box.width) // 2
+            b_mid_y = int(box.top) + int(box.height) // 2
+            if (
+                int(shape.left) - 80_000 <= b_mid_x <= int(shape.left) + int(shape.width) + 80_000
+                and int(shape.top) - 80_000 <= b_mid_y <= int(shape.top) + int(shape.height) + 80_000
+                and int(box.height) >= 500_000
+            ):
+                has_body = True
+                break
+        if has_body:
+            continue
+
+        pad = 40_000
+        box = slide.shapes.add_textbox(
+            Emu(int(shape.left) + pad),
+            Emu(int(shape.top) + pad),
+            Emu(max(200_000, int(shape.width) - 2 * pad)),
+            Emu(max(200_000, int(shape.height) - 2 * pad)),
+        )
+        box.name = f"NarrativeBody_{len(created) + 1}"
+        _style_empty_narrative_textbox(box)
+        _bring_shape_to_front(slide, box)
+        created.append(box)
+        logger.info("Created empty narrative text box %s inside %s", box.name, shape.name)
+    return created
+
+
 def clear_leading_action_narrative(slide) -> int:
     """Clear Leading Issues / Action Plan body text; keep headers and empty editable boxes.
 
     Works across GIR (bottom band) and EA/ASAP (right-side stacked boxes).
+    Ensures each narrative region has an empty clickable text box for manual entry.
     """
     headers = []
     for shape in slide.shapes:
@@ -325,47 +467,15 @@ def clear_leading_action_narrative(slide) -> int:
                     break
 
     cleared = 0
-    for shape in slide.shapes:
-        if not getattr(shape, "has_text_frame", False):
-            continue
-        # Only clear body text boxes — not red border rectangles.
-        if "textbox" not in (shape.name or "").casefold():
-            continue
-        text = (shape.text_frame.text or "").strip()
-        lower = text.casefold()
-        if "leading issue" in lower or lower.startswith("action plan"):
-            continue
-        if int(shape.height) < 500_000:
-            continue
-        if int(shape.top) < 800_000:
-            continue
-
-        mid_x = int(shape.left) + int(shape.width) // 2
-        near_header = False
-        for header in headers:
-            h_mid = int(header.left) + int(header.width) // 2
-            # Same column as a Leading Issues / Action Plan header, and below it.
-            if abs(mid_x - h_mid) <= 2_200_000 and int(shape.top) > int(header.top) + 100_000:
-                near_header = True
-                break
-        if not near_header and not headers:
-            # Fallback for GIR bottom band when headers weren't matched.
-            if int(shape.top) >= 4_850_000:
-                near_header = True
-        if not near_header:
-            continue
-
-        clear_text_frame_content(shape.text_frame)
-        tf = shape.text_frame
-        if tf.paragraphs:
-            para = tf.paragraphs[0]
-            if para.runs:
-                para.runs[0].text = ""
-            else:
-                para.add_run().text = ""
+    bodies = _narrative_body_boxes(slide, headers)
+    for shape in bodies:
+        _style_empty_narrative_textbox(shape)
+        _bring_shape_to_front(slide, shape)
         cleared += 1
         logger.info("Cleared narrative box %s", shape.name)
 
+    created = _ensure_narrative_body_in_borders(slide, headers)
+    cleared += len(created)
     return cleared
 
 

@@ -760,19 +760,27 @@ def _verify_output(prs: Presentation) -> None:
     leftover = [t for t in narrative_left if t]
     if leftover:
         logger.warning("Slide 5 GIR narrative boxes still have text: %s", leftover[:2])
-    # Slide 6 EA/ASAP narrative boxes should also be empty/editable.
+    # Slide 6 EA/ASAP narrative boxes should also be empty/editable text boxes.
     ea = prs.slides[5]
-    ea_bodies = [
+    ea_textboxes = [
         s
         for s in ea.shapes
         if getattr(s, "has_text_frame", False)
+        and "textbox" in (s.name or "").casefold()
         and int(s.height) > 500_000
         and int(s.top) > 1_000_000
     ]
-    ea_leftover = [ (s.text_frame.text or "").strip() for s in ea_bodies if (s.text_frame.text or "").strip() ]
-    # Filter out title-like leftovers
-    ea_leftover = [t for t in ea_leftover if "leading" not in t.casefold() and not t.casefold().startswith("action plan")]
+    ea_leftover = [
+        (s.text_frame.text or "").strip()
+        for s in ea_textboxes
+        if (s.text_frame.text or "").strip()
+        and "leading" not in (s.text_frame.text or "").casefold()
+        and not (s.text_frame.text or "").casefold().startswith("action plan")
+    ]
+    print(f"VERIFY slide 6 EA narrative body text boxes: {len(ea_textboxes)}")
     print(f"VERIFY slide 6 EA narrative leftover bodies: {len(ea_leftover)}")
+    if len(ea_textboxes) < 2:
+        logger.warning("Slide 6 EA expected empty Leading Issues / Action Plan text boxes, found %s", len(ea_textboxes))
     if ea_leftover:
         logger.warning("Slide 6 EA narrative still has text: %s", ea_leftover[:2])
     else:

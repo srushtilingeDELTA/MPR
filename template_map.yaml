@@ -94,7 +94,8 @@ slides:
         fit: fill
         optional: true
       - type: clear_narrative
-        # Empty Leading Issues / Action Plan body text boxes (headers kept)
+        # Empty Leading Issues / Action Plan body text boxes (headers kept).
+        # Creates a clickable empty text box inside each border if one is missing.
 
   # PPT 7 — People (live table + charts from actuals)
   - index: 6
