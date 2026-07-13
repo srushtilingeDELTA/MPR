@@ -1,17 +1,22 @@
-"""Inspect System tab sections in 2026 - GSE Scorecards.xlsx.
+"""Inspect / debug System tab section detection for scorecard screenshots.
 
 Usage:
     python scripts/inspect_scorecard_system.py
+    python scripts/inspect_scorecard_system.py --dump-left
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+import io
+
+from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from report_utils import load_config
@@ -19,7 +24,40 @@ from scorecard_screenshots import detect_system_layout, select_sections_for_slid
 from workbook_store import WorkbookStore
 
 
+def _fmt(r1: int, r2: int, c1: int, c2: int) -> str:
+    return f"{get_column_letter(c1)}{r1}:{get_column_letter(c2)}{r2}"
+
+
+def _dump_left(raw: bytes, sheet_name: str = "System", max_rows: int = 120) -> None:
+    wb = load_workbook(io.BytesIO(raw), data_only=True)
+    match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), None)
+    if match is None:
+        print(f"Sheet {sheet_name!r} not found. Available: {wb.sheetnames}")
+        return
+    ws = wb[match]
+    print(f"\nLeft columns dump ({match}), rows 1-{max_rows}, cols A-F:")
+    print(f"Merged ranges (first 30): {list(ws.merged_cells.ranges)[:30]}")
+    for row in range(1, max_rows + 1):
+        parts = []
+        for col in range(1, 7):
+            val = ws.cell(row, col).value
+            if val is None or str(val).strip() == "":
+                continue
+            parts.append(f"{get_column_letter(col)}={str(val).strip()[:40]!r}")
+        if parts:
+            print(f"  R{row}: " + " | ".join(parts))
+    wb.close()
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Inspect System scorecard sections.")
+    parser.add_argument(
+        "--dump-left",
+        action="store_true",
+        help="Print left-column values to debug category detection",
+    )
+    args = parser.parse_args()
+
     config = load_config(base_dir=BASE_DIR)
     store = WorkbookStore(config, BASE_DIR)
     try:
@@ -29,6 +67,9 @@ def main() -> int:
         print(exc)
         print("Sync SharePoint files or place the workbook under data/ first.")
         return 1
+
+    if args.dump_left:
+        _dump_left(raw)
 
     layout = detect_system_layout(raw, sheet_name="System")
     sections = layout.sections
@@ -69,11 +110,13 @@ def main() -> int:
             f"  {_fmt(layout.header_start_row, b4[1], b4[2], b4[3])}  -> "
             + ", ".join(s.title for s in slide4)
         )
+
+    if len(sections) < 2:
+        print(
+            "\nWARNING: only one section detected. Re-run with --dump-left and share the output "
+            "so category splits can be tuned to your workbook."
+        )
     return 0
-
-
-def _fmt(r1: int, r2: int, c1: int, c2: int) -> str:
-    return f"{get_column_letter(c1)}{r1}:{get_column_letter(c2)}{r2}"
 
 
 if __name__ == "__main__":

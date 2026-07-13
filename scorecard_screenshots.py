@@ -107,6 +107,38 @@ MONTH_HEADER_TOKENS = {
     "DECEMBER",
 }
 
+# Live GSE System tab category labels (vertical bars on the left).
+CATEGORY_KEYWORDS = (
+    "safety",
+    "security",
+    "customer",
+    "experience",
+    "operations",
+    "people",
+    "finance",
+    "financial",
+    "quality",
+    "reliability",
+    "maintenance",
+    "cost",
+    "budget",
+    "total",
+    "overall",
+    "summary",
+    "scorecard",
+)
+
+METRIC_LABELS = {
+    "plan",
+    "actual",
+    "percent",
+    "points",
+    "score",
+    "weight",
+    "kpi",
+    "total score",
+}
+
 
 def _theme_rgb(theme: int | None, tint: float | None = None) -> tuple[int, int, int] | None:
     # Approximate Office theme colors used by Delta scorecards.
@@ -263,6 +295,27 @@ def _header_band(ws: Worksheet, month_row: int, min_col: int, max_col: int, firs
     return start, max(start, end)
 
 
+def _is_category_title(text: str) -> bool:
+    if not text or len(text) > 80:
+        return False
+    lower = text.casefold().strip()
+    if lower in METRIC_LABELS:
+        return False
+    token = _normalize_month_token(text)
+    if token in MONTH_HEADER_TOKENS or token[:3] in MONTH_HEADER_TOKENS:
+        return False
+    if any(k in lower for k in CATEGORY_KEYWORDS):
+        return True
+    # e.g. "Safety & Security (25.0%)"
+    if "(" in text and "%" in text:
+        return True
+    return False
+
+
+def _left_label_columns(min_col: int, max_col: int) -> range:
+    return range(min_col, min(min_col + 5, max_col + 1))
+
+
 def _vertical_category_merges(
     ws: Worksheet,
     min_row: int,
@@ -273,20 +326,26 @@ def _vertical_category_merges(
     """
     Category sections are tall merged cells in the leftmost columns, e.g.
     'Safety & Security (25.0%)' spanning many rows with a maroon/blue/orange fill.
-    Returns list of (start_row, end_row, title, is_black).
+    Ignores sheet-wide wrapper merges like a single 'System' label.
     """
+    body_height = max(max_row - min_row + 1, 1)
     found: list[tuple[int, int, str, bool]] = []
     for merged in ws.merged_cells.ranges:
         height = merged.max_row - merged.min_row + 1
         width = merged.max_col - merged.min_col + 1
         if height < 4 or width > 2:
             continue
-        if merged.min_col > min_col + 1:
+        if merged.min_col > min_col + 4:
             continue
         if merged.max_row < min_row or merged.min_row > max_row:
             continue
+        # Skip wrappers that cover most of the sheet (seen as one 'System' block).
+        if height >= max(20, int(body_height * 0.45)):
+            continue
         title = _cell_text(ws.cell(merged.min_row, merged.min_col))
         if not title:
+            continue
+        if title.strip().casefold() in {"system", "system scorecard"} and height >= 20:
             continue
         rgb = _fill_rgb(ws.cell(merged.min_row, merged.min_col))
         is_black = _is_dark(rgb)
@@ -296,58 +355,169 @@ def _vertical_category_merges(
     return found
 
 
-def _contiguous_left_fill_sections(
+def _category_title_rows(
     ws: Worksheet,
     min_row: int,
     max_row: int,
     min_col: int,
     max_col: int,
 ) -> list[tuple[int, int, str, bool]]:
-    """Fallback when categories are colored left-column blocks without merges."""
-    label_col = min_col
+    """Find category labels by text in the left columns (A-E)."""
+    found: list[tuple[int, int, str, bool]] = []
+    seen_rows: set[int] = set()
+    for row in range(min_row, max_row + 1):
+        for col in _left_label_columns(min_col, max_col):
+            text = _cell_text(ws.cell(row, col))
+            if not _is_category_title(text):
+                continue
+            # Avoid treating a sheet title row as a category.
+            if text.strip().casefold() in {"system", "system scorecard"}:
+                continue
+            if row in seen_rows:
+                continue
+            rgb = _fill_rgb(ws.cell(row, col))
+            found.append((row, row, text, _is_dark(rgb)))
+            seen_rows.add(row)
+            break
+    return found
+
+
+def _total_score_section_starts(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    """
+    Each category block in the live file starts with a grey TOTAL SCORE row.
+    Use those rows as section boundaries and pull a title from the left label.
+    """
+    starts: list[tuple[int, int, str, bool]] = []
+    for row in range(min_row, max_row + 1):
+        has_total = False
+        for col in range(min_col, min(min_col + 8, max_col + 1)):
+            if _cell_text(ws.cell(row, col)).casefold() == "total score":
+                has_total = True
+                break
+        if not has_total:
+            continue
+        title = f"Section {len(starts) + 1}"
+        is_black = False
+        for col in _left_label_columns(min_col, max_col):
+            cell = ws.cell(row, col)
+            text = _cell_text(cell)
+            rgb = _fill_rgb(cell)
+            if text and _is_category_title(text):
+                title = text
+            if rgb is not None:
+                is_black = is_black or _is_dark(rgb)
+            # Look a few rows down for the vertical label text if this row only has TOTAL SCORE.
+            if title.startswith("Section"):
+                for look in range(row, min(row + 6, max_row + 1)):
+                    look_text = _cell_text(ws.cell(look, col))
+                    if _is_category_title(look_text) and look_text.strip().casefold() not in {
+                        "system",
+                        "system scorecard",
+                    }:
+                        title = look_text
+                        rgb2 = _fill_rgb(ws.cell(look, col))
+                        is_black = is_black or _is_dark(rgb2)
+                        break
+        starts.append((row, row, title, is_black))
+    return starts
+
+
+def _fill_run_sections(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    """Split on left-column fill-color changes across columns A-E."""
+    # Pick the left column with the most filled cells.
+    best_col = min_col
+    best_filled = -1
+    for col in _left_label_columns(min_col, max_col):
+        filled = sum(1 for row in range(min_row, max_row + 1) if _fill_rgb(ws.cell(row, col)) is not None)
+        if filled > best_filled:
+            best_filled = filled
+            best_col = col
+    if best_filled < 8:
+        return []
+
     sections: list[tuple[int, int, str, bool]] = []
     current_start = None
-    current_title = ""
     current_rgb = None
+    current_title = ""
     current_black = False
 
     def close(end_row: int) -> None:
-        nonlocal current_start, current_title, current_rgb, current_black
+        nonlocal current_start, current_rgb, current_title, current_black
         if current_start is None:
             return
-        sections.append((current_start, end_row, current_title or f"Section {len(sections) + 1}", current_black))
+        sections.append(
+            (
+                current_start,
+                end_row,
+                current_title or f"Section {len(sections) + 1}",
+                current_black,
+            )
+        )
         current_start = None
-        current_title = ""
         current_rgb = None
+        current_title = ""
         current_black = False
 
     for row in range(min_row, max_row + 1):
-        cell = ws.cell(row, label_col)
-        text = _cell_text(cell)
-        rgb = _fill_rgb(cell)
-        # Prefer a filled label cell; also accept text-only category starts.
-        is_label = bool(text) and (
-            rgb is not None
-            or any(token in text.casefold() for token in ("safety", "customer", "operations", "people", "finance", "financial", "quality", "summary", "total"))
-        )
-        if is_label and (current_start is None or text != current_title):
-            if current_start is not None:
-                close(row - 1)
+        rgb = _fill_rgb(ws.cell(row, best_col))
+        text = _cell_text(ws.cell(row, best_col))
+        if rgb is None:
+            continue
+        if current_start is None:
             current_start = row
-            current_title = text
             current_rgb = rgb
+            current_title = text if _is_category_title(text) else ""
             current_black = _is_dark(rgb)
             continue
-        if current_start is not None and rgb is not None and current_rgb is not None and rgb != current_rgb and text:
+        if rgb != current_rgb:
             close(row - 1)
             current_start = row
-            current_title = text
             current_rgb = rgb
+            current_title = text if _is_category_title(text) else ""
             current_black = _is_dark(rgb)
+        elif not current_title and _is_category_title(text):
+            current_title = text
+            current_black = current_black or _is_dark(rgb)
 
     if current_start is not None:
         close(max_row)
-    return sections
+
+    # Drop tiny runs (likely KPI banding, not category bars).
+    return [s for s in sections if s[1] - s[0] >= 3]
+
+
+def _choose_raw_sections(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    """Try several strategies; keep the first that finds 2+ real categories."""
+    candidates = [
+        ("vertical merges", _vertical_category_merges(ws, min_row, max_row, min_col, max_col)),
+        ("category titles", _category_title_rows(ws, min_row, max_row, min_col, max_col)),
+        ("TOTAL SCORE rows", _total_score_section_starts(ws, min_row, max_row, min_col, max_col)),
+        ("left fill runs", _fill_run_sections(ws, min_row, max_row, min_col, max_col)),
+    ]
+    for name, found in candidates:
+        if len(found) >= 2:
+            logger.info("System section strategy=%s count=%s", name, len(found))
+            return found
+        logger.info("System section strategy=%s count=%s (skip)", name, len(found))
+    return []
 
 
 def detect_system_layout(
@@ -370,12 +540,15 @@ def detect_system_layout(
     month_row = _find_month_header_row(ws, min_row, max_row, min_col, max_col)
     body_start = (month_row + 1) if month_row else min_row
 
-    raw_sections = _vertical_category_merges(ws, body_start, max_row, min_col, max_col)
-    if len(raw_sections) < 2:
-        raw_sections = _contiguous_left_fill_sections(ws, body_start, max_row, min_col, max_col)
-
+    raw_sections = _choose_raw_sections(ws, body_start, max_row, min_col, max_col)
     if not raw_sections:
-        # Last resort: treat whole body as one section.
+        logger.warning(
+            "Could not split System categories (cols %s-%s rows %s-%s); capturing full body",
+            get_column_letter(min_col),
+            get_column_letter(max_col),
+            body_start,
+            max_row,
+        )
         raw_sections = [(body_start, max_row, "System", False)]
 
     # Extend each section to the row before the next category starts.
@@ -385,6 +558,12 @@ def detect_system_layout(
         end = max(end, next_start - 1)
         while end > start and not _row_has_content(ws, end, min_col, max_col):
             end -= 1
+        # Mark trailing dark totals block as black when fill says so.
+        if not is_black:
+            for col in _left_label_columns(min_col, max_col):
+                if _is_dark(_fill_rgb(ws.cell(start, col))):
+                    is_black = True
+                    break
         normalized.append((start, end, title, is_black))
 
     first_section_row = normalized[0][0]
@@ -465,15 +644,6 @@ def select_sections_for_slide(
 
     chosen = sorted(chosen, key=lambda s: s.start_row)
     return chosen
-
-
-def _combine_range(sections: list[Section]) -> tuple[int, int, int, int]:
-    return (
-        min(s.start_row for s in sections),
-        max(s.end_row for s in sections),
-        min(s.start_col for s in sections),
-        max(s.end_col for s in sections),
-    )
 
 
 def _range_address(start_row: int, end_row: int, start_col: int, end_col: int) -> str:
@@ -610,7 +780,12 @@ def capture_range_png(
                 logger.info("Captured %s!%s via Excel COM (%s bytes)", sheet_name, range_addr, len(png))
                 return png
         except Exception as exc:
-            logger.warning("Excel COM capture unavailable (%s); using rendered fallback", exc)
+            logger.warning(
+                "Excel COM capture unavailable (%s). "
+                "For true Excel screenshots on Windows run: pip install pywin32. "
+                "Using Pillow render fallback for now.",
+                exc,
+            )
 
     png = _capture_via_render(workbook_bytes, sheet_name, start_row, end_row, start_col, end_col)
     logger.info("Rendered %s!%s via Pillow (%s bytes)", sheet_name, range_addr, len(png))
