@@ -27,6 +27,7 @@ $Files = @(
     "scripts/slide_review.py",
     "scripts/dump_template_inventory.py",
     "scripts/list_workbook_sheets.py",
+    "scripts/list_scorecard_sheets.py",
     "scripts/download_from_sharepoint.py",
     "scripts/sync_sharepoint_files.py",
     "scripts/list_sharepoint_folder.py",

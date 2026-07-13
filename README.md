@@ -60,21 +60,29 @@ python main.py
 
 | Slide | Content updated |
 |-------|-----------------|
-| 0 | Report month text (e.g. May 2026) |
+| 0 | Report month text |
 | 1 | Planned Discussion agenda topics + times |
-| 2 | System Scorecard: Safety & Security + Customer Experience + Operations |
-| 3 | System Scorecard: People + Finance + Overall and Opportunities |
-| 4 | GIR tables + monthly trend chart |
-| 6 | People scorecard table (where KPIs match) |
+| 2 | System scorecard screenshot: Safety & Security + Customer Experience + Operations |
+| 3 | System scorecard screenshot: People + Finance + Overall and Opportunities |
+| 4 | GIR tables + monthly trend chart (actuals) |
+| 5 | EA / ASAP screenshot when a matching scorecard sheet exists |
+| 6 | People table + charts (actuals) |
+| 7 | Finance overview screenshot from workings workbook |
 | 10 | PMI Motorized / Stationary charts |
 | 11 | ISR Reliability / Severity charts |
+| 13–18 | North / South / Stationary scorecard sheet screenshots |
 | 19 | Jam Rate / Clear Times charts |
 | 21 | VOS chart |
+| 23–24 | Galley scorecard sheet screenshots |
 
-Other scorecard image slides stay as template images until entity screenshots are added.
+Narrative / comment slides stay as template text for manual entry.
+
+On Windows with Excel installed, screenshots use Excel **CopyPicture**. Elsewhere Pillow renders cells as a fallback.
 
 ```powershell
-python scripts\inspect_scorecard_system.py
+python scripts\list_scorecard_sheets.py      # see scorecard/workings sheet names
+python scripts\inspect_scorecard_system.py   # System section detection
+python main.py
 ```
 
 ## Project files
@@ -101,6 +109,7 @@ MPR/
     ├── slide_review.py
     ├── dump_template_inventory.py
     ├── list_workbook_sheets.py
+    ├── list_scorecard_sheets.py
     ├── verify_setup.py
     ├── sync_sharepoint_files.py
     ├── list_sharepoint_folder.py

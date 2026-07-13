@@ -441,6 +441,7 @@ def apply_workings_table(slide, data: MprData, element: dict) -> bool:
 def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
     etype = element["type"]
     workbook = element.get("workbook", "actuals")
+    optional = bool(element.get("optional", False))
 
     if etype == "month_tokens":
         replace_month_tokens_on_slide(slide, data)
@@ -457,17 +458,14 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
     elif etype == "chart_slide":
         update_chart_slide_mapped(slide, data, element.get("charts", []), workbook)
     elif etype == "scorecard_sheet":
-        if not apply_scorecard_sheet(slide, data, element):
-            if not element.get("optional", False):
-                logger.warning("No scorecard data for slide element %s", element)
+        if not apply_scorecard_sheet(slide, data, element) and not optional:
+            logger.warning("No scorecard data for slide element %s", element)
     elif etype == "scorecard_screenshot":
-        if not apply_scorecard_screenshot_element(slide, data, element):
-            if not element.get("optional", False):
-                logger.warning("No System scorecard screenshot for element %s", element)
+        if not apply_scorecard_screenshot_element(slide, data, element) and not optional:
+            logger.warning("No scorecard screenshot for element %s", element)
     elif etype == "workings_table":
-        if not apply_workings_table(slide, data, element):
-            if not element.get("optional", False):
-                logger.warning("No workings data for slide element %s", element)
+        if not apply_workings_table(slide, data, element) and not optional:
+            logger.warning("No workings data for slide element %s", element)
 
 
 def _apply_slide_spec(slide, data: MprData, config: dict, slide_spec: dict) -> None:

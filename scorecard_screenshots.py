@@ -1264,18 +1264,101 @@ def _remove_slide_pictures(slide) -> int:
     return removed
 
 
+def resolve_sheet_name(
+    workbook_bytes: bytes,
+    *,
+    sheet: str | None = None,
+    sheet_index: int | None = None,
+    sheet_match: list[str] | None = None,
+    sheet_match_index: int = 0,
+    available: list[str] | None = None,
+) -> str:
+    """Resolve a worksheet name from explicit name, index, or substring match."""
+    names = available
+    if names is None:
+        wb = load_workbook(io.BytesIO(workbook_bytes), read_only=True, data_only=False)
+        try:
+            names = list(wb.sheetnames)
+        finally:
+            wb.close()
+
+    if sheet:
+        if sheet in names:
+            return sheet
+        exact = next((n for n in names if n.strip().casefold() == sheet.casefold()), None)
+        if exact:
+            return exact
+
+    patterns = [str(p).strip().casefold() for p in (sheet_match or []) if str(p).strip()]
+    if patterns:
+        hits = [n for n in names if all(p in n.casefold() for p in patterns)]
+        if not hits:
+            hits = [n for n in names if any(p in n.casefold() for p in patterns)]
+        if hits:
+            idx = int(sheet_match_index or 0)
+            if idx < 0:
+                idx = len(hits) + idx
+            if 0 <= idx < len(hits):
+                return hits[idx]
+            # Match found but index out of range — fall through to sheet_index.
+
+    if sheet_index is not None:
+        idx = int(sheet_index)
+        if 0 <= idx < len(names):
+            return names[idx]
+        raise ValueError(f"sheet_index={idx} out of range for sheets {names}")
+
+    if sheet:
+        raise ValueError(f"Sheet {sheet!r} not found. Available: {names}")
+    raise ValueError(f"Could not resolve sheet from index/match. Available: {names}")
+
+
+def capture_sheet_png(
+    workbook_bytes: bytes,
+    sheet_name: str,
+    *,
+    prefer_excel_com: bool = True,
+    max_rows: int | None = 120,
+    max_cols: int | None = 40,
+) -> bytes:
+    """Screenshot the used range of any worksheet (entity / workings / System)."""
+    wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
+    match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), None)
+    if match is None:
+        wb.close()
+        raise ValueError(f"Sheet {sheet_name!r} not found. Available: {wb.sheetnames}")
+    ws = wb[match]
+    min_row, max_row, min_col, max_col = _used_bounds(ws)
+    wb.close()
+
+    if max_rows is not None:
+        max_row = min(max_row, min_row + int(max_rows) - 1)
+    if max_cols is not None:
+        max_col = min(max_col, min_col + int(max_cols) - 1)
+
+    logger.info(
+        "Capturing full sheet %s!%s",
+        match,
+        _range_address(min_row, max_row, min_col, max_col),
+    )
+    return capture_range_png(
+        workbook_bytes,
+        match,
+        min_row,
+        max_row,
+        min_col,
+        max_col,
+        prefer_excel_com=prefer_excel_com,
+    )
+
+
 def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
-    """Replace the template System Scorecard picture with a live Excel screenshot."""
+    """Replace a template picture with a live Excel screenshot (System sections or full sheet)."""
     workbook = element.get("workbook", "scorecards")
-    sheet_name = element.get("sheet", "System")
-    mode = element.get("sections", "first")
-    count = int(element.get("count", 3))
-    include_black = bool(element.get("include_black", False))
-    match = element.get("match") or []
-    fallback_indices = element.get("fallback_indices") or element.get("indices") or []
     prefer_com = bool(element.get("prefer_excel_com", True))
     replace_existing = bool(element.get("replace_existing_pictures", True))
     fit = str(element.get("fit", "fill")).lower()
+    mode = str(element.get("sections", element.get("capture", "auto"))).lower()
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
@@ -1283,34 +1366,36 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         logger.warning("Scorecard screenshot skipped: %s", exc)
         return False
 
+    available = []
     try:
-        layout = _cached_system_layout(workbook_bytes, sheet_name)
-    except Exception as exc:
-        logger.warning("Could not detect System layout: %s", exc)
-        return False
+        available = list(data.sheet_names(workbook))
+    except Exception:
+        available = []
 
-    chosen = select_sections_for_slide(
-        layout.sections,
-        mode=mode,
-        count=count,
-        include_black=include_black,
-        match=list(match) if match else None,
-        indices=[int(i) for i in fallback_indices] if fallback_indices else None,
-    )
-    if not chosen:
-        logger.warning(
-            "No System sections selected for mode=%s match=%s available=%s",
-            mode,
-            match,
-            [s.title for s in layout.sections],
+    try:
+        sheet_name = resolve_sheet_name(
+            workbook_bytes,
+            sheet=element.get("sheet"),
+            sheet_index=element.get("sheet_index"),
+            sheet_match=element.get("sheet_match"),
+            sheet_match_index=int(element.get("sheet_match_index", 0) or 0),
+            available=available or None,
         )
+    except Exception as exc:
+        logger.warning("Scorecard sheet resolve failed: %s", exc)
         return False
 
     explicit = element.get("range")
+    png: bytes | None = None
+
+    # Full-sheet / explicit-range capture for entity tabs, workings, etc.
+    wants_full_sheet = mode in {"sheet", "full", "all", "used_range"} or (
+        mode == "auto" and sheet_name.casefold() != "system"
+    )
     if explicit:
         from openpyxl.utils.cell import range_boundaries
 
-        min_col, min_row, max_col, max_row = range_boundaries(explicit)
+        min_col, min_row, max_col, max_row = range_boundaries(str(explicit))
         png = capture_range_png(
             workbook_bytes,
             sheet_name,
@@ -1320,7 +1405,49 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
             max_col,
             prefer_excel_com=prefer_com,
         )
+    elif wants_full_sheet:
+        try:
+            png = capture_sheet_png(
+                workbook_bytes,
+                sheet_name,
+                prefer_excel_com=prefer_com,
+                max_rows=element.get("max_rows", 120),
+                max_cols=element.get("max_cols", 40),
+            )
+        except Exception as exc:
+            logger.warning("Full-sheet capture failed for %s: %s", sheet_name, exc)
+            return False
     else:
+        # System tab: split into named category blocks.
+        try:
+            layout = _cached_system_layout(workbook_bytes, sheet_name)
+        except Exception as exc:
+            logger.warning("Could not detect System layout: %s", exc)
+            return False
+
+        count = int(element.get("count", 3))
+        include_black = bool(element.get("include_black", False))
+        match = element.get("match") or []
+        fallback_indices = element.get("fallback_indices") or element.get("indices") or []
+        section_mode = mode if mode in {"match", "indices", "first", "last"} else (
+            "match" if match else "first"
+        )
+        chosen = select_sections_for_slide(
+            layout.sections,
+            mode=section_mode,
+            count=count,
+            include_black=include_black,
+            match=list(match) if match else None,
+            indices=[int(i) for i in fallback_indices] if fallback_indices else None,
+        )
+        if not chosen:
+            logger.warning(
+                "No System sections selected for mode=%s match=%s available=%s",
+                section_mode,
+                match,
+                [s.title for s in layout.sections],
+            )
+            return False
         png = capture_sections_png(
             workbook_bytes,
             sheet_name,
@@ -1328,6 +1455,8 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
             layout=layout,
             prefer_excel_com=prefer_com,
         )
+        logger.info("System screenshot sections=%s", [s.title for s in chosen])
+
     if not png:
         return False
 
@@ -1356,8 +1485,9 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         fit=fit,
     )
     logger.info(
-        "Placed System scorecard image on slide sections=%s box=(%s,%s,%s,%s) fit=%s",
-        [s.title for s in chosen],
+        "Placed scorecard image from %s!%s box=(%s,%s,%s,%s) fit=%s",
+        workbook,
+        sheet_name,
         left,
         top,
         width,

@@ -1,5 +1,6 @@
 # Template element map for GSE MPR - Template.pptx
 # Preserve template look: only update mapped data elements.
+# Replace template pictures with live Excel screenshots when configured.
 # Do not clear pictures/text unless a replacement is successfully applied.
 
 slides:
@@ -13,10 +14,9 @@ slides:
     name: agenda
     keep_title: true
     elements:
-      # Restore Planned Discussion topics/times (never clear this slide).
       - type: agenda
 
-  # PPT slides 3-4 = System Scorecard screenshots from Scorecards → System tab
+  # PPT 3 — System Scorecard (Safety / Customer Experience / Operations)
   - index: 2
     name: scorecard_summary_1
     keep_title: true
@@ -34,6 +34,7 @@ slides:
         fit: fill
         optional: false
 
+  # PPT 4 — System Scorecard (People / Finance / Overall)
   - index: 3
     name: scorecard_summary_2
     keep_title: true
@@ -53,6 +54,7 @@ slides:
         fit: fill
         optional: false
 
+  # PPT 5 — GIR (live tables + chart from actuals)
   - index: 4
     name: gir
     keep_title: true
@@ -66,10 +68,20 @@ slides:
         workbook: actuals
         kpi: GIR
 
+  # PPT 6 — EA Compliance / ASAP (template picture → live screenshot when sheet exists)
   - index: 5
-    name: safety_other
+    name: ea_asap
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["EA", "ASAP", "Compliance"]
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
+  # PPT 7 — People (live table + charts from actuals)
   - index: 6
     name: people
     keep_title: true
@@ -93,18 +105,29 @@ slides:
           - title: "Accountability"
             patterns: ["Accountability", "ACCOUNTABILITY"]
 
+  # PPT 8 — Finance overview (workings workbook screenshot)
   - index: 7
-    name: people_other
+    name: finance_overview
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: workings
+        sheet_index: 0
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
+  # PPT 9-10 — Finance narrative (manual)
   - index: 8
-    name: pmi_intro
+    name: finance_comments_1
     keep_title: true
 
   - index: 9
-    name: pmi_summary
+    name: finance_comments_2
     keep_title: true
 
+  # PPT 11 — PMI charts
   - index: 10
     name: pmi
     keep_title: true
@@ -117,6 +140,7 @@ slides:
           - title: Stationary
             patterns: ["PM (S)"]
 
+  # PPT 12 — ISR charts
   - index: 11
     name: isr
     keep_title: true
@@ -129,34 +153,97 @@ slides:
           - title: Severity
             patterns: ["SEV"]
 
+  # PPT 13 — ISR narrative (manual)
   - index: 12
-    name: isr_other
+    name: isr_comments
     keep_title: true
 
+  # PPT 14-19 — Entity scorecards (template pictures → live sheet screenshots)
   - index: 13
-    name: entity_scorecard_1
+    name: north_scorecard_summary
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["North"]
+        sheet_match_index: 0
+        sheet_index: 1
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
   - index: 14
-    name: entity_scorecard_2
+    name: north_scorecard_comparison
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["North"]
+        sheet_match_index: 1
+        sheet_index: 2
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
   - index: 15
-    name: entity_scorecard_3
+    name: south_scorecard_summary
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["South"]
+        sheet_match_index: 0
+        sheet_index: 3
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
   - index: 16
-    name: entity_scorecard_4
+    name: south_scorecard_comparison
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["South"]
+        sheet_match_index: 1
+        sheet_index: 4
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
   - index: 17
-    name: entity_scorecard_5
+    name: stationary_scorecard_summary
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["Stationary"]
+        sheet_match_index: 0
+        sheet_index: 5
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
   - index: 18
-    name: entity_scorecard_6
+    name: stationary_scorecard_comparison
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["Stationary"]
+        sheet_match_index: 1
+        sheet_index: 6
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
 
+  # PPT 20 — Operations charts
   - index: 19
     name: operations
     keep_title: true
@@ -167,12 +254,14 @@ slides:
           - title: "Jam Rate"
             patterns: ["Jams"]
           - title: "Clear Times"
-            patterns: ["Times"]
+            patterns: ["Clear Times", "Clear Time", "Times"]
 
+  # PPT 21 — Operations narrative (manual)
   - index: 20
-    name: operations_other
+    name: operations_comments
     keep_title: true
 
+  # PPT 22 — VOS chart
   - index: 21
     name: vos
     keep_title: true
@@ -181,21 +270,37 @@ slides:
         workbook: actuals
         charts:
           - title: ""
-            patterns: ["VOS (S)"]
+            patterns: ["VOS (S)", "VOS"]
 
+  # PPT 23 — Station of the Quarter (manual / template)
   - index: 22
-    name: financials
+    name: station_of_the_quarter
+    keep_title: true
+
+  # PPT 24-25 — Galley scorecards
+  - index: 23
+    name: galley_scorecard_summary
     keep_title: true
     elements:
-      - type: workings_table
-        workbook: workings
-        sheet: null
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["Galley"]
+        sheet_match_index: 0
+        sheet_index: 7
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
         optional: true
 
-  - index: 23
-    name: appendix_1
-    keep_title: true
-
   - index: 24
-    name: appendix_2
+    name: galley_scorecard_comparison
     keep_title: true
+    elements:
+      - type: scorecard_screenshot
+        workbook: scorecards
+        sheet_match: ["Galley"]
+        sheet_match_index: 1
+        sections: sheet
+        replace_existing_pictures: true
+        fit: fill
+        optional: true
