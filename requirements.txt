@@ -1,5 +1,15 @@
-﻿Office365-REST-Python-Client>=2.5.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+python-pptx>=1.0.0
+python-dotenv>=1.0.0
+PyYAML>=6.0.0
+python-dateutil>=2.8.0
+
+# SharePoint access (pick one method in scripts/download_from_sharepoint.py)
+Office365-REST-Python-Client>=2.5.0
 msal>=1.28.0
+
+# Selenium fallback (Delta SSO / TravelNet-style browser login)
 selenium>=4.15.0
 webdriver-manager>=4.0.0
 beautifulsoup4>=4.12.0

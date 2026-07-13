@@ -51,19 +51,39 @@ class WorkbookStore:
             "Sync SharePoint files or save a local copy under data/."
         )
 
-    def load(self) -> None:
+    def load(self, *, only: list[str] | None = None) -> None:
         for name, wb_cfg in self._workbook_defs().items():
+            if only is not None and name not in only:
+                continue
             rel_path = wb_cfg["path"]
-            data = self._bytes_for_path(rel_path)
+            try:
+                data = self._bytes_for_path(rel_path)
+            except FileNotFoundError:
+                if wb_cfg.get("optional"):
+                    logger.warning("Optional workbook %r not found: %s", name, rel_path)
+                    continue
+                raise
             self._files[name] = pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
-            logger.info("Loaded workbook %r (%s bytes, %s sheets)", name, len(data), len(self._files[name].sheet_names))
+            logger.info(
+                "Loaded workbook %r (%s bytes, %s sheets)",
+                name,
+                len(data),
+                len(self._files[name].sheet_names),
+            )
 
     def sheet_names(self, workbook: str) -> list[str]:
         xl = self._files.get(workbook)
         return xl.sheet_names if xl else []
 
-    def read_sheet(self, workbook: str, sheet_name: str, *, header_row: int | None = None) -> pd.DataFrame:
-        cache_key = (workbook, sheet_name)
+    def read_sheet(
+        self,
+        workbook: str,
+        sheet_name: str,
+        *,
+        header_row: int | None = None,
+        raw: bool = False,
+    ) -> pd.DataFrame:
+        cache_key = (workbook, sheet_name, header_row, raw)
         if cache_key in self._sheet_cache:
             return self._sheet_cache[cache_key].copy()
 
@@ -75,10 +95,13 @@ class WorkbookStore:
             logger.debug("Sheet %r not found in workbook %r", sheet_name, workbook)
             return pd.DataFrame()
 
-        wb_cfg = self._workbook_defs().get(workbook, {})
-        header = wb_cfg.get("header_row", 0) if header_row is None else header_row
-        df = pd.read_excel(xl, sheet_name=sheet_name, header=header, engine="openpyxl")
-        df.columns = df.columns.astype(str).str.strip()
+        if raw:
+            df = pd.read_excel(xl, sheet_name=sheet_name, header=None, engine="openpyxl")
+        else:
+            wb_cfg = self._workbook_defs().get(workbook, {})
+            header = wb_cfg.get("header_row", 0) if header_row is None else header_row
+            df = pd.read_excel(xl, sheet_name=sheet_name, header=header, engine="openpyxl")
+            df.columns = df.columns.astype(str).str.strip()
         self._sheet_cache[cache_key] = df
         return df.copy()
 
@@ -105,3 +128,14 @@ class WorkbookStore:
                 row_vals.append(df.iat[r, c])
             rows.append(row_vals)
         return rows
+
+    def open_worksheet(self, workbook: str, sheet_name: str):
+        """Return an openpyxl worksheet (with formatting) for styled table export."""
+        import openpyxl
+
+        rel_path = self._workbook_defs()[workbook]["path"]
+        data = self._bytes_for_path(rel_path)
+        xl = openpyxl.load_workbook(io.BytesIO(data), data_only=False)
+        if sheet_name not in xl.sheetnames:
+            raise KeyError(f"Sheet {sheet_name!r} not in workbook {workbook!r}")
+        return xl[sheet_name]

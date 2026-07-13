@@ -90,9 +90,22 @@ def main() -> None:
                     "  1. Drag the file into the 6 - TESTING folder in Edge\n"
                     "  2. Run: python scripts\\upload_report_to_sharepoint.py\n"
                 )
-    finally:
+
         if excel_source == "sharepoint":
+            sp_cfg = config.get("sharepoint", {})
+            if parse_bool(sp_cfg.get("close_browser_after_run"), default=False):
+                end_sharepoint_browser(config)
+            else:
+                print(
+                    "\nEdge is still open on SharePoint — verify the upload, then close it yourself.\n"
+                    "(Set sharepoint.close_browser_after_run: true in config.yaml to auto-close.)\n"
+                )
+    except Exception:
+        if excel_source == "sharepoint" and parse_bool(
+            config.get("sharepoint", {}).get("close_browser_after_run"), default=False
+        ):
             end_sharepoint_browser(config)
+        raise
 
 
 if __name__ == "__main__":

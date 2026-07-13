@@ -1,11 +1,14 @@
-# Template element map for GSE MPR - Template.pptx
-# Run: python scripts/dump_template_inventory.py  (after syncing template locally)
-# to refresh slide indices and shape details from the live SharePoint template.
+# Template element map for GSE MPR - Template.pptx (from github.com/srushtisl20/DELTA main)
+# Refresh inventory: python scripts/dump_template_inventory.py
+#
+# PowerPoint slide number = index + 1
 #
 # Rules:
 # - Data comes from workbooks: actuals | workings | scorecards
-# - If data is unavailable, content areas are cleared (title/subtitle kept)
-# - No placeholder text is written
+# - Missing numeric cells on data slides show DNF (GIR) or "Data not found for …" (other slides)
+# - Charts without data → "Chart for X needs to be inserted here."
+# - Leading Issues / Action Plan → blank textboxes (manual entry)
+# - Template data images removed on filled slides
 
 slides:
   - index: 0
@@ -17,28 +20,46 @@ slides:
   - index: 1
     name: agenda
     keep_title: true
-    clear_non_titles: true
+    elements:
+      - type: agenda_slide
+        header:
+          title: "GSE Monthly Performance Summary"
+          time: "5 min"
+        sections:
+          - { title: "Safety", time: "10 min" }
+          - { title: "People", time: "10 min" }
+          - { title: "Finance", time: "10 min" }
+          - { title: "Customer Experience", time: "10 min" }
+          - { title: "North (M)", time: "10 min" }
+          - { title: "South (M)", time: "10 min" }
+          - { title: "Stationary", time: "15 min" }
+          - { title: "Galley", time: "10 min" }
+          - { title: "Closing", time: "3 min" }
+        clear_detail_text: true
 
+  # PPT 3 — System Scorecard (Safety/Customer/Ops/People) — template has PICTURE; needs native TABLE
   - index: 2
     name: scorecard_summary_1
     keep_title: true
-    clear_pictures: true
     elements:
-      - type: scorecard_sheet
+      - type: system_scorecard_table
         workbook: scorecards
-        sheet_index: 0
+        block: summary_1
+        fill_mode: full
         optional: true
 
+  # PPT 4 — System Scorecard (Finance/People footer)
   - index: 3
     name: scorecard_summary_2
     keep_title: true
-    clear_pictures: true
     elements:
-      - type: scorecard_sheet
+      - type: system_scorecard_table
         workbook: scorecards
-        sheet_index: 1
+        block: summary_2
+        fill_mode: full
         optional: true
 
+  # PPT 5 — GIR
   - index: 4
     name: gir
     keep_title: true
@@ -52,11 +73,18 @@ slides:
         workbook: actuals
         kpi: GIR
 
+  # PPT 6 — EA Compliance / ASAP — template has PICTURE only (no native table yet)
   - index: 5
-    name: safety_other
+    name: ea_asap
     keep_title: true
-    clear_non_titles: true
+    elements:
+      - type: ea_asap_tables
+        workbook: actuals
+        kpis:
+          eac: EAC
+          asap: ASAP
 
+  # PPT 7 — People survey
   - index: 6
     name: people
     keep_title: true
@@ -80,21 +108,28 @@ slides:
           - title: "Accountability"
             patterns: ["Accountability", "ACCOUNTABILITY"]
 
+  # PPT 8 — Finance overview (workings screenshot → native table)
   - index: 7
-    name: people_other
+    name: finance_overview
     keep_title: true
-    clear_non_titles: true
+    elements:
+      - type: workings_table
+        workbook: workings
+        sheet: null
+        optional: true
 
+  # PPT 9-10 — Finance comments (manual narrative)
   - index: 8
-    name: pmi_intro
+    name: finance_comments_1
     keep_title: true
     clear_non_titles: true
 
   - index: 9
-    name: pmi_summary
+    name: finance_comments_2
     keep_title: true
     clear_non_titles: true
 
+  # PPT 11 — PMI
   - index: 10
     name: pmi
     keep_title: true
@@ -107,6 +142,7 @@ slides:
           - title: Stationary
             patterns: ["PM (S)"]
 
+  # PPT 12 — ISR
   - index: 11
     name: isr
     keep_title: true
@@ -119,13 +155,15 @@ slides:
           - title: Severity
             patterns: ["SEV"]
 
+  # PPT 13 — ISR comments (manual)
   - index: 12
-    name: isr_other
+    name: isr_comments
     keep_title: true
     clear_non_titles: true
 
+  # PPT 14-19 — Entity scorecards (pictures in template; sheet_index TBD per entity)
   - index: 13
-    name: entity_scorecard_1
+    name: north_scorecard_summary
     keep_title: true
     clear_pictures: true
     elements:
@@ -135,7 +173,7 @@ slides:
         optional: true
 
   - index: 14
-    name: entity_scorecard_2
+    name: north_scorecard_comparison
     keep_title: true
     clear_pictures: true
     elements:
@@ -145,7 +183,7 @@ slides:
         optional: true
 
   - index: 15
-    name: entity_scorecard_3
+    name: south_scorecard_summary
     keep_title: true
     clear_pictures: true
     elements:
@@ -155,7 +193,7 @@ slides:
         optional: true
 
   - index: 16
-    name: entity_scorecard_4
+    name: south_scorecard_comparison
     keep_title: true
     clear_pictures: true
     elements:
@@ -165,7 +203,7 @@ slides:
         optional: true
 
   - index: 17
-    name: entity_scorecard_5
+    name: stationary_scorecard_summary
     keep_title: true
     clear_pictures: true
     elements:
@@ -175,7 +213,7 @@ slides:
         optional: true
 
   - index: 18
-    name: entity_scorecard_6
+    name: stationary_scorecard_comparison
     keep_title: true
     clear_pictures: true
     elements:
@@ -184,6 +222,7 @@ slides:
         sheet_index: 7
         optional: true
 
+  # PPT 20 — Operations (Jam Rate / Clear Times)
   - index: 19
     name: operations
     keep_title: true
@@ -194,13 +233,15 @@ slides:
           - title: "Jam Rate"
             patterns: ["Jams"]
           - title: "Clear Times"
-            patterns: ["Times"]
+            patterns: ["Clear Times", "Clear Time"]
 
+  # PPT 21 — Operations comments (manual)
   - index: 20
-    name: operations_other
+    name: operations_comments
     keep_title: true
     clear_non_titles: true
 
+  # PPT 22 — VOS
   - index: 21
     name: vos
     keep_title: true
@@ -211,18 +252,15 @@ slides:
           - title: ""
             patterns: ["VOS (S)"]
 
+  # PPT 23 — Station of the Quarter (manual / diagram)
   - index: 22
-    name: financials
+    name: station_winners
     keep_title: true
     clear_non_titles: true
-    elements:
-      - type: workings_table
-        workbook: workings
-        sheet: null
-        optional: true
 
+  # PPT 24-25 — Galley scorecards
   - index: 23
-    name: appendix_1
+    name: galley_scorecard_summary
     keep_title: true
     clear_pictures: true
     elements:
@@ -232,7 +270,7 @@ slides:
         optional: true
 
   - index: 24
-    name: appendix_2
+    name: galley_scorecard_comparison
     keep_title: true
     clear_pictures: true
     elements:

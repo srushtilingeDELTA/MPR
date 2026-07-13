@@ -437,12 +437,51 @@ def _upload_headers(session: requests.Session, site_url: str, *, method: str = "
     return headers
 
 
+def _delete_headers(session: requests.Session, site_url: str) -> dict[str, str]:
+    digest = _request_digest(session, site_url)
+    return {
+        "Accept": "application/json;odata=verbose",
+        "X-RequestDigest": digest,
+        "IF-MATCH": "*",
+        "X-HTTP-Method": "DELETE",
+    }
+
+
+def _delete_sharepoint_file(session: requests.Session, site_url: str, server_path: str) -> bool:
+    """Delete an existing SharePoint file so a fresh upload can use the same name."""
+    path_literal = server_path.replace("'", "''")
+    headers = _delete_headers(session, site_url)
+    urls = [
+        f"{site_url.rstrip('/')}/_api/web/GetFileByServerRelativeUrl('{path_literal}')",
+        f"{site_url.rstrip('/')}/_api/web/GetFileByServerRelativePath(decodedurl='{server_path}')",
+    ]
+    for api_url in urls:
+        try:
+            response = session.post(api_url, headers=headers, timeout=120)
+            if response.status_code in (200, 204, 404):
+                logger.info("Removed previous SharePoint file: %s", server_path)
+                return True
+        except Exception as exc:
+            logger.debug("SharePoint delete attempt failed (%s): %s", api_url, exc)
+    return False
+
+
+def _upload_is_locked(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "423" in message or "locked" in message
+
+
 def _parse_upload_response(response: requests.Response, folder: str, file_name: str) -> str:
     if response.status_code in (401, 403):
         body = response.text[:500]
         raise PermissionError(
             f"SharePoint upload denied (HTTP {response.status_code}). "
             f"Response: {body}"
+        )
+    if response.status_code == 423:
+        raise PermissionError(
+            f"SharePoint file is locked (HTTP 423): {folder}/{file_name}. "
+            "Close the file in Edge/SharePoint if it is open, then re-run."
         )
     response.raise_for_status()
     try:
@@ -531,6 +570,7 @@ def upload_file_to_sharepoint(
     session, _ = get_sharepoint_session(config)
 
     if upload_mode in ("auto", "rest"):
+        server_path = f"{folder.rstrip('/')}/{file_name}"
         try:
             try:
                 server_path = _upload_via_add(session, site_url, folder, file_name, data)
@@ -538,9 +578,18 @@ def upload_file_to_sharepoint(
                 return server_path
             except Exception as add_exc:
                 logger.info("Add upload failed, trying overwrite: %s", add_exc)
-                server_path = _upload_via_put(session, site_url, folder, file_name, data)
-                logger.info("Uploaded %s to SharePoint (%s bytes)", file_name, len(data))
-                return server_path
+                try:
+                    server_path = _upload_via_put(session, site_url, folder, file_name, data)
+                    logger.info("Uploaded %s to SharePoint (%s bytes)", file_name, len(data))
+                    return server_path
+                except Exception as put_exc:
+                    if _upload_is_locked(add_exc) or _upload_is_locked(put_exc):
+                        logger.info("SharePoint file locked; deleting previous copy then re-uploading")
+                        _delete_sharepoint_file(session, site_url, server_path)
+                        server_path = _upload_via_add(session, site_url, folder, file_name, data)
+                        logger.info("Uploaded %s to SharePoint after delete (%s bytes)", file_name, len(data))
+                        return server_path
+                    raise put_exc from add_exc
         except Exception as exc:
             errors.append(f"REST: {exc}")
             logger.warning("REST upload failed: %s", exc)

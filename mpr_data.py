@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -30,6 +30,32 @@ MONTH_SHEET_NAMES = {
 
 MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 MONTH_LABELS_UPPER = [m.upper() for m in MONTH_LABELS]
+
+
+def _coerce_number(value) -> float | None:
+    """Convert Excel/pandas cell values to float for KPI aggregation."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, (timedelta, pd.Timedelta)):
+        # Excel duration cells often arrive as timedelta; use day-fraction scale.
+        return value.total_seconds() / 86400.0
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -129,7 +155,14 @@ class MprData:
                 return candidate
         return None
 
-    def _match_kpi_rows(self, df: pd.DataFrame, kpi_patterns: list[str], month: int | None = None) -> pd.DataFrame:
+    def _match_kpi_rows(
+        self,
+        df: pd.DataFrame,
+        kpi_patterns: list[str],
+        month: int | None = None,
+        *,
+        year: int | None = None,
+    ) -> pd.DataFrame:
         if df.empty or self.cols["kpi"] not in df.columns:
             return df.iloc[0:0]
 
@@ -142,10 +175,54 @@ class MprData:
                 mask |= df[col].str.contains(pattern, case=False, na=False, regex=False)
         rows = df.loc[mask].copy()
         c = self.cols
+        target_year = year if year is not None else self.year
         if c["year"] in rows.columns:
-            rows = rows.loc[rows[c["year"]] == self.year]
+            rows = rows.loc[rows[c["year"]] == target_year]
         if month and c["month"] in rows.columns:
             rows = rows.loc[rows[c["month"]] == month]
+        return rows
+
+    def _system_rows(self, rows: pd.DataFrame) -> pd.DataFrame:
+        entity_col = self.cols.get("entity")
+        if entity_col and entity_col in rows.columns:
+            system_rows = rows[rows[entity_col].str.contains("system", case=False, na=False)]
+            if not system_rows.empty:
+                return system_rows
+        return rows
+
+    def _entity_rows(self, rows: pd.DataFrame, entity_pattern: str) -> pd.DataFrame:
+        entity_col = self.cols.get("entity")
+        if entity_col and entity_col in rows.columns:
+            matched = rows[rows[entity_col].str.contains(entity_pattern, case=False, na=False, regex=False)]
+            if not matched.empty:
+                return matched
+        return rows.iloc[0:0]
+
+    def _rows_for_kpi(
+        self,
+        kpi_patterns: list[str],
+        month: int,
+        *,
+        year: int | None = None,
+        workbook: str | None = None,
+        entity_pattern: str | None = None,
+        system_only: bool = True,
+    ) -> pd.DataFrame:
+        wb = workbook or self._actuals_workbook()
+        df = self.month_frame(month, workbook=wb)
+        if df.empty:
+            return df.iloc[0:0]
+
+        rows = self._match_kpi_rows(df, kpi_patterns, month=month, year=year)
+        if rows.empty:
+            return rows
+
+        if entity_pattern:
+            rows = self._entity_rows(rows, entity_pattern)
+        elif system_only:
+            system_rows = self._system_rows(rows)
+            if not system_rows.empty:
+                rows = system_rows
         return rows
 
     def _aggregate_rows(self, rows: pd.DataFrame, aggregation: str = "weighted") -> KpiValue:
@@ -158,31 +235,43 @@ class MprData:
         if aggregation == "first":
             row = rows.iloc[0]
             return KpiValue(
-                actual=float(row[c["actual"]]) if pd.notna(row.get(c["actual"])) else None,
-                goal=float(row[goal_col]) if goal_col and pd.notna(row.get(goal_col)) else None,
-                num=float(row[c["num"]]) if c.get("num") in rows.columns and pd.notna(row.get(c["num"])) else None,
-                den=float(row[c["den"]]) if c.get("den") in rows.columns and pd.notna(row.get(c["den"])) else None,
+                actual=_coerce_number(row.get(c["actual"])),
+                goal=_coerce_number(row.get(goal_col)) if goal_col else None,
+                num=_coerce_number(row.get(c["num"])) if c.get("num") in rows.columns else None,
+                den=_coerce_number(row.get(c["den"])) if c.get("den") in rows.columns else None,
             )
 
         num = den = actual = goal = None
-        if c.get("num") in rows.columns and c.get("den") in rows.columns:
+
+        if aggregation == "sum":
+            if c["actual"] in rows.columns:
+                total = rows[c["actual"]].sum(min_count=1)
+                actual = _coerce_number(total)
+            goal = None
+            if goal_col:
+                goals = rows[goal_col].dropna()
+                if not goals.empty:
+                    goal = _coerce_number(goals.iloc[0])
+            return KpiValue(actual=actual, goal=goal)
+
+        if c["actual"] in rows.columns:
+            mean_val = rows[c["actual"]].mean()
+            actual = _coerce_number(mean_val)
+
+        if actual is None and c.get("num") in rows.columns and c.get("den") in rows.columns:
             num = rows[c["num"]].sum(min_count=1)
             den = rows[c["den"]].sum(min_count=1)
             if pd.notna(num) and pd.notna(den) and den != 0:
-                actual = float(num / den)
-
-        if actual is None and c["actual"] in rows.columns:
-            mean_val = rows[c["actual"]].mean()
-            actual = float(mean_val) if pd.notna(mean_val) else None
+                actual = _coerce_number(num / den)
 
         if goal_col:
             goals = rows[goal_col].dropna()
             if not goals.empty:
                 goal_val = goals.iloc[0] if aggregation == "first" else goals.mean()
-                goal = float(goal_val) if pd.notna(goal_val) else None
+                goal = _coerce_number(goal_val)
 
-        num_out = float(num) if pd.notna(num) else None
-        den_out = float(den) if pd.notna(den) else None
+        num_out = _coerce_number(num)
+        den_out = _coerce_number(den)
         return KpiValue(actual=actual, goal=goal, num=num_out, den=den_out)
 
     def kpi_value(
@@ -191,22 +280,22 @@ class MprData:
         month: int | None = None,
         aggregation: str = "weighted",
         workbook: str | None = None,
+        *,
+        year: int | None = None,
+        entity_pattern: str | None = None,
+        system_only: bool = True,
     ) -> KpiValue:
         month = month or self.month
-        wb = workbook or self._actuals_workbook()
-        df = self.month_frame(month, workbook=wb)
-        if df.empty:
-            return KpiValue()
-
-        rows = self._match_kpi_rows(df, kpi_patterns, month=month)
+        rows = self._rows_for_kpi(
+            kpi_patterns,
+            month,
+            year=year,
+            workbook=workbook,
+            entity_pattern=entity_pattern,
+            system_only=system_only,
+        )
         if rows.empty:
             return KpiValue()
-
-        if self.cols.get("entity") in rows.columns:
-            system_rows = rows[rows[self.cols["entity"]].str.contains("system", case=False, na=False)]
-            if not system_rows.empty:
-                rows = system_rows
-
         return self._aggregate_rows(rows, aggregation=aggregation)
 
     def monthly_series(
@@ -215,12 +304,25 @@ class MprData:
         through_month: int | None = None,
         aggregation: str = "weighted",
         workbook: str | None = None,
+        *,
+        year: int | None = None,
+        entity_pattern: str | None = None,
+        system_only: bool = True,
     ) -> list[float | None]:
         through_month = through_month or self.month
+        target_year = year if year is not None else self.year
         values: list[float | None] = []
         for m in range(1, 13):
             if m <= through_month:
-                kv = self.kpi_value(kpi_patterns, month=m, aggregation=aggregation, workbook=workbook)
+                kv = self.kpi_value(
+                    kpi_patterns,
+                    month=m,
+                    aggregation=aggregation,
+                    workbook=workbook,
+                    year=target_year,
+                    entity_pattern=entity_pattern,
+                    system_only=system_only,
+                )
                 values.append(kv.actual)
             else:
                 values.append(None)
@@ -231,27 +333,88 @@ class MprData:
         kpi_patterns: list[str],
         aggregation: str = "weighted",
         workbook: str | None = None,
+        *,
+        year: int | None = None,
+        entity_pattern: str | None = None,
+        system_only: bool = True,
     ) -> float | None:
         wb = workbook or self._actuals_workbook()
+        target_year = year if year is not None else self.year
         parts = [
             v
-            for v in self.monthly_series(kpi_patterns, through_month=self.month, aggregation=aggregation, workbook=wb)
+            for v in self.monthly_series(
+                kpi_patterns,
+                through_month=self.month,
+                aggregation=aggregation,
+                workbook=wb,
+                year=target_year,
+                entity_pattern=entity_pattern,
+                system_only=system_only,
+            )
             if v is not None
         ]
         if not parts:
             return None
         if aggregation == "weighted":
             nums = dens = 0.0
+            c = self.cols
             for m in range(1, self.month + 1):
-                df = self.month_frame(m, workbook=wb)
-                rows = self._match_kpi_rows(df, kpi_patterns, month=m)
-                c = self.cols
+                rows = self._rows_for_kpi(
+                    kpi_patterns,
+                    m,
+                    year=target_year,
+                    workbook=wb,
+                    entity_pattern=entity_pattern,
+                    system_only=system_only,
+                )
                 if c.get("num") in rows.columns and c.get("den") in rows.columns:
                     nums += rows[c["num"]].sum(min_count=1) or 0
                     dens += rows[c["den"]].sum(min_count=1) or 0
             if dens:
                 return nums / dens
         return sum(parts) / len(parts)
+
+    def ytd_sum(
+        self,
+        kpi_patterns: list[str],
+        workbook: str | None = None,
+        *,
+        year: int | None = None,
+        entity_pattern: str | None = None,
+        system_only: bool = False,
+    ) -> float | None:
+        total = 0.0
+        found = False
+        target_year = year if year is not None else self.year
+        for month in range(1, self.month + 1):
+            kv = self.kpi_value(
+                kpi_patterns,
+                month=month,
+                aggregation="sum",
+                workbook=workbook,
+                year=target_year,
+                entity_pattern=entity_pattern,
+                system_only=system_only,
+            )
+            if kv.actual is not None:
+                total += float(kv.actual)
+                found = True
+        return total if found else None
+
+    def prior_year_monthly_series(
+        self,
+        kpi_patterns: list[str],
+        *,
+        years_back: int = 1,
+        through_month: int | None = None,
+        workbook: str | None = None,
+    ) -> list[float | None]:
+        return self.monthly_series(
+            kpi_patterns,
+            through_month=through_month or self.month,
+            workbook=workbook,
+            year=self.year - years_back,
+        )
 
     def report_month_label(self) -> str:
         return date(self.year, self.month, 1).strftime("%B %Y")

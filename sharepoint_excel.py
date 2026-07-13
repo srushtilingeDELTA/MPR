@@ -74,7 +74,7 @@ import pandas as pd
 
 # --- Defaults for the file the user asked about -----------------------------
 
-DEFAULT_SITE_URL = "https://deltaairlines.sharepoint.com/sites/Deltanet"
+DEFAULT_SITE_URL = "https://deltaairlines.sharepoint.com/sites/DL002488"
 DEFAULT_LIBRARY = "GSE MPR Documents"
 DEFAULT_FOLDER = "6 - TESTING"
 DEFAULT_FILE = "MPR Actuals and Goals_v2"
@@ -236,17 +236,24 @@ def load_excel_from_sharepoint(
     sheet_name: Union[str, int, None] = None,
     auth: Optional[AuthConfig] = None,
     save_to: Optional[str] = None,
+    server_folder_path: Optional[str] = None,
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """End-to-end: authenticate, locate the file, download it, load into pandas.
 
     Returns the parsed workbook. If ``save_to`` is given, the raw file is also
     written to that local path.
+
+    If ``server_folder_path`` is set (e.g. from config), it is used directly
+    instead of resolving the library root by title.
     """
     auth = auth or AuthConfig()
     ctx = build_context(site_url, auth)
 
-    library_root = get_library_root_url(ctx, library)
-    folder_url = str(PurePosixPath(library_root) / folder) if folder else library_root
+    if server_folder_path:
+        folder_url = server_folder_path
+    else:
+        library_root = get_library_root_url(ctx, library)
+        folder_url = str(PurePosixPath(library_root) / folder) if folder else library_root
     file_url = find_file_url(ctx, folder_url, file_name)
 
     data = download_file(ctx, file_url)

@@ -1,4 +1,4 @@
-﻿excel:
+excel:
   file_path: "data/MPR Actuals and Goals_v2.xlsx"
   sheet_name: "May Actuals"
   header_row: 0
@@ -28,6 +28,7 @@ sharepoint:
   upload_method: "auto"   # auto | rest | selenium
   upload_login_wait_seconds: 60
   upload_complete_wait_seconds: 90
+  close_browser_after_run: false   # keep Edge open after upload so you can verify on SharePoint
   cache_to_disk: false
   browser: "edge"
   edge_path: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"

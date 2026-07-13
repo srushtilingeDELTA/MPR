@@ -129,6 +129,8 @@ def _create_driver(
             options.add_argument("--headless=new")
         options.add_argument("--start-maximized")
         options.add_experimental_option("prefs", prefs)
+        if not headless:
+            options.add_experimental_option("detach", True)
         return _create_edge_driver(options, browser_path)
 
     from selenium.webdriver.chrome.options import Options
@@ -352,6 +354,7 @@ def upload_file_via_selenium(config: dict, local_path: Path, driver=None) -> Non
         print(f"\n>>> Uploading {local_path.name} ... waiting {upload_wait}s for completion.\n")
         time.sleep(upload_wait)
         logger.info("Selenium upload finished for %s", local_path.name)
+        print(f"\n>>> Upload sent. Check the SharePoint folder in this Edge window.\n")
     finally:
         if own_driver:
             driver.quit()
