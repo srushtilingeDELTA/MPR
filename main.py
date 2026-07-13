@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.13-system-capture-quality"
+SCRIPT_VERSION = "2026.07.13-system-window-capture"
 
 import logging
 from pathlib import Path

@@ -706,16 +706,30 @@ def _verify_output(prs: Presentation) -> None:
             try:
                 blob = pic.image.blob
                 with Image.open(io.BytesIO(blob)) as img:
-                    print(
-                        f"VERIFY {label} image: {len(blob)} bytes, {img.width}x{img.height}"
+                    sample = img.resize((max(1, img.width // 10), max(1, img.height // 10)))
+                    pixels = list(sample.convert("RGB").getdata())
+                    whiteish = (
+                        sum(1 for r, g, b in pixels if r >= 245 and g >= 245 and b >= 245) / len(pixels)
+                        if pixels
+                        else 1.0
                     )
-                    if len(blob) < 20_000 or img.width < 400 or img.height < 200:
+                    print(
+                        f"VERIFY {label} image: {len(blob)} bytes, {img.width}x{img.height}, "
+                        f"white={whiteish:.0%}"
+                    )
+                    if (
+                        len(blob) < 20_000
+                        or img.width < 400
+                        or img.height < 200
+                        or whiteish >= 0.90
+                    ):
                         logger.error(
-                            "%s screenshot looks empty/low-quality (%s bytes, %sx%s)",
+                            "%s screenshot looks empty/blank (%s bytes, %sx%s, white=%.0f%%)",
                             label,
                             len(blob),
                             img.width,
                             img.height,
+                            whiteish * 100,
                         )
             except Exception as exc:
                 logger.warning("%s could not inspect image blob: %s", label, exc)
