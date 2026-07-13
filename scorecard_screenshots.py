@@ -30,6 +30,20 @@ DEFAULT_WIDTH = 11534806
 DEFAULT_HEIGHT = 4862840
 
 
+def _norm_sheet_key(name: str) -> str:
+    """Casefold + strip so trailing spaces in Excel sheet names still match."""
+    return str(name or "").strip().casefold()
+
+
+def _find_sheet_name(names: list[str], sheet_name: str) -> str | None:
+    """Resolve an exact sheet name, ignoring leading/trailing whitespace."""
+    key = _norm_sheet_key(sheet_name)
+    for name in names:
+        if _norm_sheet_key(name) == key:
+            return name
+    return None
+
+
 @dataclass
 class Section:
     """One category block on the System scorecard (e.g. Safety & Security)."""
@@ -490,7 +504,7 @@ def _total_score_rows_via_excel_com(
             wb = excel.Workbooks.Open(str(path), ReadOnly=True, UpdateLinks=0)
             sheet = None
             for candidate in wb.Worksheets:
-                if str(candidate.Name).strip().casefold() == sheet_name.casefold():
+                if _norm_sheet_key(candidate.Name) == _norm_sheet_key(sheet_name):
                     sheet = candidate
                     break
             if sheet is None:
@@ -774,7 +788,7 @@ def detect_system_layout(
     # data_only=False keeps labels/formulas visible for section detection.
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
     if sheet_name not in wb.sheetnames:
-        match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), None)
+        match = _find_sheet_name(list(wb.sheetnames), sheet_name)
         if match is None:
             raise ValueError(f"Sheet {sheet_name!r} not found. Available: {wb.sheetnames}")
         sheet_name = match
@@ -952,7 +966,7 @@ _LAYOUT_CACHE: dict[tuple[int, str], SystemLayout] = {}
 
 
 def _cached_system_layout(workbook_bytes: bytes, sheet_name: str) -> SystemLayout:
-    key = (hash(workbook_bytes), sheet_name.casefold())
+    key = (hash(workbook_bytes), _norm_sheet_key(sheet_name))
     cached = _LAYOUT_CACHE.get(key)
     if cached is not None:
         return cached
@@ -989,7 +1003,7 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
         wb = excel.Workbooks.Open(str(workbook_path.resolve()), ReadOnly=True, UpdateLinks=0)
         ws = None
         for sheet in wb.Worksheets:
-            if str(sheet.Name).strip().casefold() == sheet_name.casefold():
+            if _norm_sheet_key(sheet.Name) == _norm_sheet_key(sheet_name):
                 ws = sheet
                 break
         if ws is None:
@@ -1057,7 +1071,7 @@ def _capture_via_render(
 ) -> bytes:
     """Approximate Excel look when Windows Excel COM is unavailable."""
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=True)
-    match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), sheet_name)
+    match = _find_sheet_name(list(wb.sheetnames), sheet_name) or sheet_name
     ws = wb[match]
 
     col_widths = []
@@ -1159,6 +1173,54 @@ def _sections_are_contiguous(sections: list[Section]) -> bool:
     return True
 
 
+def _row_height_weights(
+    workbook_bytes: bytes,
+    sheet_name: str,
+    start_row: int,
+    end_row: int,
+) -> list[float]:
+    """Relative Excel row heights used to crop bands from a full-range screenshot."""
+    wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
+    try:
+        match = _find_sheet_name(list(wb.sheetnames), sheet_name)
+        if match is None:
+            raise ValueError(f"Sheet {sheet_name!r} not found. Available: {wb.sheetnames}")
+        ws = wb[match]
+        heights: list[float] = []
+        for row in range(start_row, end_row + 1):
+            height = ws.row_dimensions[row].height
+            heights.append(max(float(height or 15.0), 8.0))
+        return heights
+    finally:
+        wb.close()
+
+
+def _crop_row_band(
+    png_bytes: bytes,
+    heights: list[float],
+    start_idx: int,
+    end_idx: int,
+) -> bytes:
+    """Crop an inclusive 0-based row-index band from a PNG of those row heights."""
+    if not heights or start_idx > end_idx:
+        raise ValueError("Invalid crop band")
+    start_idx = max(0, start_idx)
+    end_idx = min(len(heights) - 1, end_idx)
+    total = sum(heights)
+    if total <= 0:
+        return png_bytes
+    with Image.open(io.BytesIO(png_bytes)) as image:
+        image = image.convert("RGB")
+        y0 = int(round(image.height * sum(heights[:start_idx]) / total))
+        y1 = int(round(image.height * sum(heights[: end_idx + 1]) / total))
+        y0 = max(0, min(image.height - 1, y0))
+        y1 = max(y0 + 1, min(image.height, y1))
+        cropped = image.crop((0, y0, image.width, y1))
+        buf = io.BytesIO()
+        cropped.save(buf, format="PNG")
+        return buf.getvalue()
+
+
 def capture_sections_png(
     workbook_bytes: bytes,
     sheet_name: str,
@@ -1170,6 +1232,10 @@ def capture_sections_png(
     """
     Screenshot the System scorecard like the live Excel / template view:
     month header (JAN..YE) + selected vertical category blocks.
+
+    Always CopyPicture once from the header through the last selected section,
+    then crop/stitch bands. This avoids tiny 1-row header captures that break
+    slide 4 quality when People/Finance sit below earlier categories.
     """
     if not sections:
         return None
@@ -1178,6 +1244,8 @@ def capture_sections_png(
 
     ordered = sorted(sections, key=lambda s: s.start_row)
     start_col, end_col = layout.start_col, layout.end_col
+    full_start = layout.header_start_row
+    full_end = max(s.end_row for s in ordered)
 
     def _cap(r1: int, r2: int) -> bytes:
         return capture_range_png(
@@ -1190,18 +1258,34 @@ def capture_sections_png(
             prefer_excel_com=prefer_excel_com,
         )
 
-    # Contiguous first-N categories: one CopyPicture range (template look).
+    # Contiguous first-N categories under the header: one CopyPicture (template look).
     if _sections_are_contiguous(ordered) and not layout.needs_header_stitch(ordered):
-        return _cap(layout.header_start_row, ordered[-1].end_row)
+        return _cap(full_start, full_end)
 
-    parts: list[bytes] = [_cap(layout.header_start_row, layout.header_end_row)]
+    # Capture the full vertical span once, then crop header + body bands.
+    full_png = _cap(full_start, full_end)
+    heights = _row_height_weights(workbook_bytes, sheet_name, full_start, full_end)
+
+    def _band(r1: int, r2: int) -> bytes:
+        return _crop_row_band(full_png, heights, r1 - full_start, r2 - full_start)
+
+    parts: list[bytes] = [_band(layout.header_start_row, layout.header_end_row)]
     if _sections_are_contiguous(ordered):
-        parts.append(_cap(ordered[0].start_row, ordered[-1].end_row))
+        parts.append(_band(ordered[0].start_row, ordered[-1].end_row))
     else:
-        # Non-adjacent categories (e.g. Finance + People with a gap): capture each block.
         for section in ordered:
-            parts.append(_cap(section.start_row, section.end_row))
-    return _stitch_vertical_many(parts)
+            parts.append(_band(section.start_row, section.end_row))
+
+    stitched = _stitch_vertical_many(parts)
+    logger.info(
+        "System capture cropped from %s!%s (%s bytes -> %s bytes, sections=%s)",
+        sheet_name,
+        _range_address(full_start, full_end, start_col, end_col),
+        len(full_png),
+        len(stitched),
+        [s.title for s in ordered],
+    )
+    return stitched
 
 
 def place_picture_on_slide(
@@ -1290,15 +1374,15 @@ def resolve_sheet_name(
     if sheet:
         if sheet in names:
             return sheet
-        exact = next((n for n in names if n.strip().casefold() == sheet.casefold()), None)
+        exact = _find_sheet_name(names, sheet)
         if exact:
             return exact
 
     patterns = [str(p).strip().casefold() for p in (sheet_match or []) if str(p).strip()]
     if patterns:
-        hits = [n for n in names if all(p in n.casefold() for p in patterns)]
+        hits = [n for n in names if all(p in _norm_sheet_key(n) for p in patterns)]
         if not hits:
-            hits = [n for n in names if any(p in n.casefold() for p in patterns)]
+            hits = [n for n in names if any(p in _norm_sheet_key(n) for p in patterns)]
         if hits:
             idx = int(sheet_match_index or 0)
             if idx < 0:
@@ -1328,7 +1412,7 @@ def capture_sheet_png(
 ) -> bytes:
     """Screenshot the used range of any worksheet (entity / workings / System)."""
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
-    match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), None)
+    match = _find_sheet_name(list(wb.sheetnames), sheet_name)
     if match is None:
         wb.close()
         raise ValueError(f"Sheet {sheet_name!r} not found. Available: {wb.sheetnames}")
@@ -1395,7 +1479,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
 
     # Full-sheet / explicit-range capture for entity tabs, workings, etc.
     wants_full_sheet = mode in {"sheet", "full", "all", "used_range"} or (
-        mode == "auto" and sheet_name.casefold() != "system"
+        mode == "auto" and _norm_sheet_key(sheet_name) != "system"
     )
     if explicit:
         from openpyxl.utils.cell import range_boundaries

@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.13-visible-agenda-system"
+SCRIPT_VERSION = "2026.07.13-empty-agenda-system-crop"
 
 import logging
 from pathlib import Path

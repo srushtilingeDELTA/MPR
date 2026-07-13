@@ -161,15 +161,14 @@ slides:
     name: isr_comments
     keep_title: true
 
-  # PPT 14-19 — Entity scorecards (template pictures → live sheet screenshots)
+  # PPT 14-19 — Entity scorecards (live sheets in 2026 - GSE Scorecards.xlsx)
   - index: 13
     name: north_scorecard_summary
     keep_title: true
     elements:
       - type: scorecard_screenshot
         workbook: scorecards
-        sheet_match: ["North"]
-        sheet_match_index: 0
+        sheet_match: ["Motorized"]
         sheet_index: 1
         sections: sheet
         replace_existing_pictures: true
@@ -182,9 +181,8 @@ slides:
     elements:
       - type: scorecard_screenshot
         workbook: scorecards
-        sheet_match: ["North"]
-        sheet_match_index: 1
-        sheet_index: 2
+        sheet_match: ["REGION"]
+        sheet: "REGION SUMMARY"
         sections: sheet
         replace_existing_pictures: true
         fit: fill
@@ -196,9 +194,8 @@ slides:
     elements:
       - type: scorecard_screenshot
         workbook: scorecards
-        sheet_match: ["South"]
-        sheet_match_index: 0
-        sheet_index: 3
+        sheet_match: ["ACTUALS"]
+        sheet: "ACTUALS"
         sections: sheet
         replace_existing_pictures: true
         fit: fill
@@ -210,9 +207,8 @@ slides:
     elements:
       - type: scorecard_screenshot
         workbook: scorecards
-        sheet_match: ["South"]
-        sheet_match_index: 1
-        sheet_index: 4
+        sheet_match: ["Weighting"]
+        sheet: "Weighting Lookups"
         sections: sheet
         replace_existing_pictures: true
         fit: fill
@@ -225,8 +221,6 @@ slides:
       - type: scorecard_screenshot
         workbook: scorecards
         sheet_match: ["Stationary"]
-        sheet_match_index: 0
-        sheet_index: 5
         sections: sheet
         replace_existing_pictures: true
         fit: fill
@@ -238,9 +232,8 @@ slides:
     elements:
       - type: scorecard_screenshot
         workbook: scorecards
-        sheet_match: ["Stationary"]
-        sheet_match_index: 1
-        sheet_index: 6
+        sheet_match: ["GOALS"]
+        sheet: "GOALS"
         sections: sheet
         replace_existing_pictures: true
         fit: fill
@@ -288,8 +281,6 @@ slides:
       - type: scorecard_screenshot
         workbook: scorecards
         sheet_match: ["Galley"]
-        sheet_match_index: 0
-        sheet_index: 7
         sections: sheet
         replace_existing_pictures: true
         fit: fill
@@ -302,7 +293,8 @@ slides:
       - type: scorecard_screenshot
         workbook: scorecards
         sheet_match: ["Galley"]
-        sheet_match_index: 1
+        sheet_match_index: 0
+        sheet: "Galley GSE Template"
         sections: sheet
         replace_existing_pictures: true
         fit: fill

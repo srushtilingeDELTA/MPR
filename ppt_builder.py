@@ -140,10 +140,6 @@ AGENDA_TOPICS: list[tuple[str, str]] = [
     ("Closing", "3 min"),
 ]
 
-# Soft placeholder so line slots are visibly present; replace when typing.
-AGENDA_NOTE_PLACEHOLDER = "•"
-
-
 def _agenda_chevrons(slide):
     """Tall off-page-connector shapes that form the nine topic columns."""
     chevrons = [
@@ -172,8 +168,8 @@ def _agenda_divider_lines(slide, chevron) -> list[int]:
     return sorted(set(tops))
 
 
-def _style_agenda_note_box(box, *, placeholder: str = AGENDA_NOTE_PLACEHOLDER) -> None:
-    """White centered note text + thin white border so the slot is visible/clickable."""
+def _style_agenda_note_box(box) -> None:
+    """Empty editable note slot between white divider lines (matches template)."""
     tf = box.text_frame
     tf.word_wrap = True
     try:
@@ -185,36 +181,30 @@ def _style_agenda_note_box(box, *, placeholder: str = AGENDA_NOTE_PLACEHOLDER) -
     except Exception:
         pass
 
-    # Visible thin white outline.
+    # No box outline — the white divider lines are the only borders.
     try:
         sp_pr = box._element.spPr
         for old in list(sp_pr.findall(qn("a:ln"))):
             sp_pr.remove(old)
         ln = etree.SubElement(sp_pr, qn("a:ln"))
-        ln.set("w", "6350")  # ~0.5 pt
-        solid = etree.SubElement(ln, qn("a:solidFill"))
-        srgb = etree.SubElement(solid, qn("a:srgbClr"))
-        srgb.set("val", "FFFFFF")
-        alpha = etree.SubElement(srgb, qn("a:alpha"))
-        alpha.set("val", "35000")  # subtle
+        ln.set("w", "0")
+        etree.SubElement(ln, qn("a:noFill"))
     except Exception:
         pass
 
     if not tf.paragraphs:
         return
-    # Collapse to one clean paragraph for typing/paste.
+    # Clear leftover template/placeholder text so slots look empty.
     para = tf.paragraphs[0]
     para.alignment = PP_ALIGN.CENTER
-    current = tf.text.strip()
-    keep = current if current and current != AGENDA_NOTE_PLACEHOLDER else placeholder
     if para.runs:
-        para.runs[0].text = keep
+        para.runs[0].text = ""
         for run in para.runs[1:]:
             run.text = ""
         run = para.runs[0]
     else:
         run = para.add_run()
-        run.text = keep
+        run.text = ""
     run.font.size = Pt(11)
     run.font.bold = False
     run.font.color.rgb = RGBColor(255, 255, 255)
@@ -224,11 +214,11 @@ def _style_agenda_note_box(box, *, placeholder: str = AGENDA_NOTE_PLACEHOLDER) -
 
 
 def _ensure_agenda_line_textboxes(slide) -> int:
-    """Put one clickable note text box in each white-line gap of every chevron."""
+    """Put one empty clickable note text box in each white-line gap of every chevron."""
     built = 0
     chevrons = _agenda_chevrons(slide)
 
-    # Remove empty oversized body boxes that span multiple slots (they block editing).
+    # Remove oversized body boxes that span multiple slots (incl. leftover text).
     for chevron in chevrons:
         lines = _agenda_divider_lines(slide, chevron)
         if len(lines) < 2:
@@ -244,9 +234,6 @@ def _ensure_agenda_line_textboxes(slide) -> int:
                 continue
             top = int(shape.top)
             if top < 2_150_000 or top > 3_900_000:
-                continue
-            # Empty and taller than ~1.5 slots → remove so we can place clean boxes.
-            if shape.text_frame.text.strip():
                 continue
             if int(shape.height) > avg_slot * 1.4:
                 _remove_shape(shape)
@@ -296,6 +283,9 @@ def _ensure_agenda_line_textboxes(slide) -> int:
                 existing.top = Emu(slot_top)
                 existing.width = Emu(col_width)
                 existing.height = Emu(slot_bottom - slot_top)
+                if not (existing.name or "").startswith("AgendaNote_"):
+                    existing.name = f"AgendaNote_{built + 1}"
+                    built += 1
 
             _style_agenda_note_box(existing)
             _bring_to_front(slide, existing)
@@ -304,7 +294,7 @@ def _ensure_agenda_line_textboxes(slide) -> int:
 
 
 def fill_agenda_slide(slide) -> None:
-    """Restore Planned Discussion titles, times, and visible editable line notes."""
+    """Restore Planned Discussion titles/times; clear note slots between white lines."""
     title_boxes = [
         shape
         for shape in slide.shapes
@@ -331,7 +321,7 @@ def fill_agenda_slide(slide) -> None:
 
     built = _ensure_agenda_line_textboxes(slide)
     logger.info(
-        "Planned Discussion ready: %s topics, %s editable note slots between white lines",
+        "Planned Discussion ready: %s topics, %s empty editable note slots between white lines",
         len(AGENDA_TOPICS),
         built,
     )
@@ -674,16 +664,30 @@ def _verify_output(prs: Presentation) -> None:
         return
 
     agenda = prs.slides[1]
-    note_slots = sum(
+    note_slots = [
+        s
+        for s in agenda.shapes
+        if s.has_text_frame
+        and 2_150_000 <= int(s.top) <= 3_900_000
+        and int(s.height) < 500_000
+        and (
+            (s.name or "").startswith("AgendaNote_")
+            or not (s.text_frame.text or "").strip()
+        )
+    ]
+    leftover_text = sum(
         1
         for s in agenda.shapes
         if s.has_text_frame
         and 2_150_000 <= int(s.top) <= 3_900_000
-        and AGENDA_NOTE_PLACEHOLDER in (s.text_frame.text or "")
+        and int(s.height) < 500_000
+        and (s.text_frame.text or "").strip()
     )
-    print(f"\nVERIFY slide 2 (agenda): {note_slots} visible note slots with placeholders")
-    if note_slots < 20:
-        logger.warning("Agenda note slots look incomplete (%s) — expected ~27", note_slots)
+    print(f"\nVERIFY slide 2 (agenda): {len(note_slots)} empty editable note slots")
+    if len(note_slots) < 20:
+        logger.warning("Agenda note slots look incomplete (%s) — expected ~27", len(note_slots))
+    if leftover_text:
+        logger.warning("Agenda still has %s note-band shape(s) with leftover text", leftover_text)
 
     for idx, label in ((2, "slide 3 System"), (3, "slide 4 System")):
         slide = prs.slides[idx]
@@ -695,6 +699,22 @@ def _verify_output(prs: Presentation) -> None:
                 "Run: python scripts\\inspect_scorecard_system.py --dump-left",
                 label,
             )
+            continue
+        # Blob size catches the old tiny-header stitch failure (~400 bytes).
+        blob_sizes = []
+        for pic in pics:
+            try:
+                blob_sizes.append(len(pic.image.blob))
+            except Exception:
+                pass
+        if blob_sizes:
+            print(f"VERIFY {label} image bytes: {blob_sizes}")
+            if max(blob_sizes) < 5_000:
+                logger.error(
+                    "%s screenshot blob is too small (%s bytes) — capture looks empty",
+                    label,
+                    max(blob_sizes),
+                )
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
