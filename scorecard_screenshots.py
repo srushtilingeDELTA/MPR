@@ -251,6 +251,35 @@ def _cell_text(cell: Cell) -> str:
     return str(value).strip()
 
 
+def _normalize_label(text: str) -> str:
+    """Collapse NBSP / newlines / multi-space so TOTAL SCORE matches reliably."""
+    if not text:
+        return ""
+    cleaned = (
+        str(text)
+        .replace("\xa0", " ")
+        .replace("\u2007", " ")
+        .replace("\u202f", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("\t", " ")
+    )
+    return " ".join(cleaned.split()).casefold()
+
+
+def _is_total_score_label(text: str) -> bool:
+    label = _normalize_label(text)
+    if not label:
+        return False
+    compact = label.replace(" ", "")
+    return (
+        label == "total score"
+        or compact == "totalscore"
+        or label.startswith("total score")
+        or "total score" in label
+    )
+
+
 def _row_has_content(ws: Worksheet, row: int, min_col: int, max_col: int) -> bool:
     for col in range(min_col, max_col + 1):
         if _cell_text(ws.cell(row, col)):
@@ -412,23 +441,117 @@ def _vertical_category_merges(
     return found
 
 
-def _total_score_section_starts(
+def _find_total_score_rows(
     ws: Worksheet,
     min_row: int,
     max_row: int,
     min_col: int,
     max_col: int,
-) -> list[tuple[int, int, str, bool]]:
-    """
-    Each category block in the live System tab starts with a grey TOTAL SCORE row.
-    Use those rows as section boundaries.
-    """
+) -> list[int]:
+    """Return 1-based rows that contain a TOTAL SCORE label anywhere in the used width."""
     starts: list[int] = []
     for row in range(min_row, max_row + 1):
-        for col in range(min_col, min(min_col + 10, max_col + 1)):
-            if "total score" in _cell_text(ws.cell(row, col)).casefold():
+        for col in range(min_col, max_col + 1):
+            if _is_total_score_label(_cell_text(ws.cell(row, col))):
                 starts.append(row)
                 break
+    return starts
+
+
+def _total_score_rows_via_excel_com(
+    workbook_bytes: bytes,
+    sheet_name: str,
+    min_row: int,
+    max_row: int,
+) -> list[int]:
+    """Read displayed cell text through Excel — catches labels openpyxl misses."""
+    try:
+        import win32com.client  # type: ignore
+    except ImportError:
+        return []
+
+    excel = None
+    wb = None
+    starts: list[int] = []
+    try:
+        try:
+            import pythoncom
+
+            pythoncom.CoInitialize()
+        except Exception:
+            pythoncom = None  # type: ignore
+        with tempfile.TemporaryDirectory(prefix="mpr_scorecard_detect_") as tmp:
+            path = Path(tmp) / "scorecards.xlsx"
+            path.write_bytes(workbook_bytes)
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            wb = excel.Workbooks.Open(str(path), ReadOnly=True, UpdateLinks=0)
+            sheet = None
+            for candidate in wb.Worksheets:
+                if str(candidate.Name).strip().casefold() == sheet_name.casefold():
+                    sheet = candidate
+                    break
+            if sheet is None:
+                return []
+            used = sheet.UsedRange
+            values = used.Value
+            if values is None:
+                return []
+            # UsedRange.Value is a tuple-of-tuples for multi-cell ranges.
+            if not isinstance(values, tuple):
+                values = ((values,),)
+            elif values and not isinstance(values[0], tuple):
+                values = (values,)
+            origin_row = int(used.Row)
+            for r_idx, row_vals in enumerate(values):
+                row_num = origin_row + r_idx
+                if row_num < min_row or row_num > max_row:
+                    continue
+                if not isinstance(row_vals, tuple):
+                    row_vals = (row_vals,)
+                for value in row_vals:
+                    if value is None:
+                        continue
+                    if _is_total_score_label(str(value)):
+                        starts.append(row_num)
+                        break
+            if starts:
+                logger.info("Excel COM found TOTAL SCORE rows: %s", starts)
+            return starts
+    except Exception as exc:
+        logger.info("Excel COM TOTAL SCORE scan unavailable: %s", exc)
+        return []
+    finally:
+        try:
+            if wb is not None:
+                wb.Close(SaveChanges=False)
+        except Exception:
+            pass
+        try:
+            if excel is not None:
+                excel.Quit()
+        except Exception:
+            pass
+        try:
+            if pythoncom is not None:
+                pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
+def _sections_from_total_score_starts(
+    ws: Worksheet,
+    starts: list[int],
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+) -> list[tuple[int, int, str, bool]]:
+    if len(starts) < 2:
+        return []
+    # Dedupe + sort; ignore TOTAL SCORE rows above the body.
+    starts = sorted({row for row in starts if row >= min_row})
     if len(starts) < 2:
         return []
 
@@ -437,8 +560,7 @@ def _total_score_section_starts(
         end = starts[idx + 1] - 1 if idx + 1 < len(starts) else max_row
         title = ""
         is_black = False
-        # Prefer far-left rail text/fill (category bar), not KPI column text.
-        for row in range(start, min(start + 8, end + 1)):
+        for row in range(start, min(start + 10, end + 1)):
             for col in _left_label_columns(min_col, max_col):
                 cell = ws.cell(row, col)
                 text = _cell_text(cell)
@@ -456,6 +578,47 @@ def _total_score_section_starts(
             title = f"Section {idx + 1}"
         sections.append((start, end, title, is_black))
     return _assign_default_titles(sections)
+
+
+def _total_score_section_starts(
+    ws: Worksheet,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+    *,
+    workbook_bytes: bytes | None = None,
+    sheet_name: str = "System",
+) -> list[tuple[int, int, str, bool]]:
+    """
+    Each category block in the live System tab starts with a grey TOTAL SCORE row.
+    Use those rows as section boundaries.
+    """
+    starts = _find_total_score_rows(ws, min_row, max_row, min_col, max_col)
+    if len(starts) < 2 and workbook_bytes:
+        starts = _total_score_rows_via_excel_com(
+            workbook_bytes, sheet_name, min_row, max_row
+        )
+    return _sections_from_total_score_starts(ws, starts, min_row, max_row, min_col, max_col)
+
+
+def _default_category_bands(
+    min_row: int,
+    max_row: int,
+) -> list[tuple[int, int, str, bool]]:
+    """Last-resort split into the six known System categories by row bands."""
+    names = DEFAULT_SYSTEM_CATEGORIES
+    height = max_row - min_row + 1
+    if height < len(names) * 4:
+        return []
+    sections: list[tuple[int, int, str, bool]] = []
+    for idx, name in enumerate(names):
+        start = min_row + (height * idx) // len(names)
+        end = min_row + (height * (idx + 1)) // len(names) - 1
+        if idx == len(names) - 1:
+            end = max_row
+        sections.append((start, max(start, end), name, idx == len(names) - 1))
+    return sections
 
 
 def _category_title_rows(
@@ -478,13 +641,10 @@ def _category_title_rows(
             if row in seen_rows:
                 continue
             rgb = _fill_rgb(ws.cell(row, col))
-            # Require a filled rail cell so KPI text in nearby columns is ignored.
-            if rgb is None:
-                continue
             found.append((row, row, text, _is_dark(rgb)))
             seen_rows.add(row)
             break
-    return _assign_default_titles(found) if found else []
+    return _assign_default_titles(found) if len(found) >= 3 else []
 
 
 def _fill_run_sections(
@@ -495,10 +655,9 @@ def _fill_run_sections(
     max_col: int,
 ) -> list[tuple[int, int, str, bool]]:
     """Split on left-column fill-color changes across columns A-E."""
-    # Pick the left column with the most filled cells.
     best_col = min_col
     best_filled = -1
-    for col in _left_label_columns(min_col, max_col):
+    for col in range(min_col, min(min_col + 5, max_col + 1)):
         filled = sum(1 for row in range(min_row, max_row + 1) if _fill_rgb(ws.cell(row, col)) is not None)
         if filled > best_filled:
             best_filled = filled
@@ -553,8 +712,8 @@ def _fill_run_sections(
     if current_start is not None:
         close(max_row)
 
-    # Drop tiny runs (likely KPI banding, not category bars).
-    return [s for s in sections if s[1] - s[0] >= 3]
+    kept = [s for s in sections if s[1] - s[0] >= 3]
+    return _assign_default_titles(kept) if len(kept) >= 3 else []
 
 
 def _choose_raw_sections(
@@ -563,16 +722,40 @@ def _choose_raw_sections(
     max_row: int,
     min_col: int,
     max_col: int,
+    *,
+    workbook_bytes: bytes | None = None,
+    sheet_name: str = "System",
 ) -> list[tuple[int, int, str, bool]]:
     """Try several strategies; prefer TOTAL SCORE boundaries for the live workbook."""
+
+    def total_score() -> list[tuple[int, int, str, bool]]:
+        return _total_score_section_starts(
+            ws,
+            min_row,
+            max_row,
+            min_col,
+            max_col,
+            workbook_bytes=workbook_bytes,
+            sheet_name=sheet_name,
+        )
+
     candidates = [
-        ("TOTAL SCORE rows", _total_score_section_starts(ws, min_row, max_row, min_col, max_col)),
-        ("vertical merges", _vertical_category_merges(ws, min_row, max_row, min_col, max_col)),
-        ("left fill runs", _fill_run_sections(ws, min_row, max_row, min_col, max_col)),
-        ("category titles", _category_title_rows(ws, min_row, max_row, min_col, max_col)),
+        ("TOTAL SCORE rows", total_score),
+        ("vertical merges", lambda: _vertical_category_merges(ws, min_row, max_row, min_col, max_col)),
+        ("left fill runs", lambda: _fill_run_sections(ws, min_row, max_row, min_col, max_col)),
+        ("category titles", lambda: _category_title_rows(ws, min_row, max_row, min_col, max_col)),
+        ("default 6-band split", lambda: _default_category_bands(min_row, max_row)),
     ]
-    for name, found in candidates:
+    for name, factory in candidates:
+        found = factory()
+        # Prefer a full System scorecard (5–6 categories). Accept 3+ as usable.
         if len(found) >= 3:
+            if name == "default 6-band split":
+                logger.warning(
+                    "Using even 6-category row split R%s-%s (TOTAL SCORE labels not readable)",
+                    min_row,
+                    max_row,
+                )
             logger.info("System section strategy=%s count=%s", name, len(found))
             return _assign_default_titles(found)
         logger.info("System section strategy=%s count=%s (skip)", name, len(found))
@@ -587,7 +770,8 @@ def detect_system_layout(
     Parse the System scorecard layout matching the live GSE file:
     month header (JAN..YE) + vertical category bars on the left.
     """
-    wb = load_workbook(io.BytesIO(workbook_bytes), data_only=True)
+    # data_only=False keeps labels/formulas visible for section detection.
+    wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
     if sheet_name not in wb.sheetnames:
         match = next((n for n in wb.sheetnames if n.strip().casefold() == sheet_name.casefold()), None)
         if match is None:
@@ -599,7 +783,15 @@ def detect_system_layout(
     month_row = _find_month_header_row(ws, min_row, max_row, min_col, max_col)
     body_start = (month_row + 1) if month_row else min_row
 
-    raw_sections = _choose_raw_sections(ws, body_start, max_row, min_col, max_col)
+    raw_sections = _choose_raw_sections(
+        ws,
+        body_start,
+        max_row,
+        min_col,
+        max_col,
+        workbook_bytes=workbook_bytes,
+        sheet_name=sheet_name,
+    )
     if not raw_sections:
         logger.warning(
             "Could not split System categories (cols %s-%s rows %s-%s); capturing full body",
@@ -705,20 +897,30 @@ def select_sections_for_slide(
                     used.add(section.index)
                     break
         chosen = sorted({s.index: s for s in chosen}.values(), key=lambda s: s.start_row)
-        if not chosen and indices:
+        if chosen:
+            return chosen
+        if indices:
             logger.warning(
                 "Name match failed for %s; falling back to indices %s (available=%s)",
                 patterns,
                 indices,
                 [s.title for s in sections],
             )
-            return select_sections_for_slide(sections, mode="indices", indices=indices)
-        if not chosen:
-            logger.warning(
-                "No System sections matched %s. Available: %s",
-                patterns,
-                [s.title for s in sections],
-            )
+            fallback = select_sections_for_slide(sections, mode="indices", indices=indices)
+            if fallback:
+                return fallback
+            # Indices out of range (e.g. only one mega-section) — take first/last third.
+            if len(sections) == 1:
+                return list(sections)
+            mid = max(1, len(sections) // 2)
+            if min(indices) >= mid:
+                return sections[mid:]
+            return sections[:mid]
+        logger.warning(
+            "No System sections matched %s. Available: %s",
+            patterns,
+            [s.title for s in sections],
+        )
         return chosen
 
     black = [s for s in sections if s.is_black]
@@ -739,6 +941,19 @@ def select_sections_for_slide(
 
     chosen = sorted(chosen, key=lambda s: s.start_row)
     return chosen
+
+
+_LAYOUT_CACHE: dict[tuple[int, str], SystemLayout] = {}
+
+
+def _cached_system_layout(workbook_bytes: bytes, sheet_name: str) -> SystemLayout:
+    key = (hash(workbook_bytes), sheet_name.casefold())
+    cached = _LAYOUT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    layout = detect_system_layout(workbook_bytes, sheet_name=sheet_name)
+    _LAYOUT_CACHE[key] = layout
+    return layout
 
 
 def _range_address(start_row: int, end_row: int, start_col: int, end_col: int) -> str:
@@ -1069,7 +1284,7 @@ def apply_scorecard_screenshot(slide, data, element: dict) -> bool:
         return False
 
     try:
-        layout = detect_system_layout(workbook_bytes, sheet_name=sheet_name)
+        layout = _cached_system_layout(workbook_bytes, sheet_name)
     except Exception as exc:
         logger.warning("Could not detect System layout: %s", exc)
         return False
