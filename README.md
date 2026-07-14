@@ -67,7 +67,7 @@ python main.py
 | 4 | GIR native tables + chart filled from workings workbook (`GIR` tab); Leading Issues / Action Plan cleared |
 | 5 | EA / ASAP table screenshot from workings workbook; Leading Issues / Action Plan cleared |
 | 6 | People: first PEOPLE table screenshot + 3 Excel graph screenshots (Leadership / Psych Safety / Accountability) from Workings `PEOPLE` tab |
-| 7 | Finance overview screenshot from workings workbook |
+| 7 | Finance: Regions/BUDGET/OVERTIME/TOTAL HOURS table screenshot from Workings `FINANCE` tab |
 | 10 | PMI Motorized / Stationary charts |
 | 11 | ISR Reliability / Severity charts |
 | 13–18 | North / South / Stationary scorecard sheet screenshots |

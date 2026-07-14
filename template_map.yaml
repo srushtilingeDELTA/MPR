@@ -108,18 +108,19 @@ slides:
         clear_narrative: true
         optional: false
 
-  # PPT 8 — Finance overview (workings workbook screenshot)
+  # PPT 8 — Finance from New GSE MPR Workings.xlsx → FINANCE tab
+  # Screenshot Regions | BUDGET $000s | OVERTIME | TOTAL HOURS (headers + data).
   - index: 7
     name: finance_overview
     keep_title: true
     elements:
-      - type: scorecard_screenshot
+      - type: finance_workings_panels
         workbook: workings
-        sheet_index: 0
-        sections: sheet
-        replace_existing_pictures: true
+        sheet: "FINANCE"
+        sheet_match: ["FINANCE", "Finance"]
+        prefer_excel_com: true
         fit: fill
-        optional: true
+        optional: false
 
   # PPT 9-10 — Finance narrative (manual)
   - index: 8

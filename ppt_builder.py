@@ -741,6 +741,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_people_workings_panels(slide, data, element) and not optional:
             logger.warning("No Workings PEOPLE panels for element %s", element)
+    elif etype == "finance_workings_panels":
+        from finance_workings import apply_finance_workings_panels
+
+        if not apply_finance_workings_panels(slide, data, element) and not optional:
+            logger.warning("No Workings FINANCE panels for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
@@ -1007,6 +1012,23 @@ def _verify_output(prs: Presentation) -> None:
         print(
             "VERIFY slide 7 People: 3 Excel graph screenshots on the right "
             "(Leadership Engagement / Psychological Safety / Accountability)"
+        )
+
+    # Slide 8 Finance: Regions/BUDGET/OVERTIME/TOTAL HOURS screenshot from Workings!FINANCE.
+    finance = prs.slides[7]
+    finance_pics = [
+        s
+        for s in finance.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 5_500_000
+    ]
+    print(f"VERIFY slide 8 Finance: {len(finance_pics)} content picture(s)")
+    if len(finance_pics) < 1:
+        logger.warning(
+            "Slide 8 Finance expected Workings FINANCE Regions/BUDGET/OT/Hours screenshot, found none"
+        )
+    else:
+        print(
+            "VERIFY slide 8 Finance: Regions/BUDGET/OVERTIME/TOTAL HOURS screenshot present"
         )
 
 
