@@ -1106,7 +1106,7 @@ def _verify_output(prs: Presentation) -> None:
         for s in pmi.shapes
         if getattr(s, "has_text_frame", False)
         and "textbox" in (s.name or "").casefold()
-        and int(s.height) > 400_000
+        and int(s.height) > 350_000
         and int(s.top) > 1_000_000
         and int(s.left) >= 8_000_000
     ]
