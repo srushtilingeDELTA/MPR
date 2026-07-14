@@ -69,7 +69,7 @@ python main.py
 | 6 | People: first PEOPLE table screenshot + 3 Excel graph screenshots (Leadership / Psych Safety / Accountability) from Workings `PEOPLE` tab |
 | 7 | Finance: Regions/BUDGET/OVERTIME/TOTAL HOURS table screenshot from Workings `FINANCE` tab |
 | 8–9 | Finance comments: Leading Issues / Action Plan text boxes emptied (boxes kept for manual entry) |
-| 10 | PMI Motorized / Stationary charts |
+| 10 | PMI: table + Motorized/Stationary graph screenshots from Workings `PMI` tab; narrative emptied |
 | 11 | ISR Reliability / Severity charts |
 | 13–18 | North / South / Stationary scorecard sheet screenshots |
 | 19 | Jam Rate / Clear Times charts |

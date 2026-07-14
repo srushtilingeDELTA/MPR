@@ -357,7 +357,7 @@ def _narrative_body_boxes(slide, headers: list) -> list:
         lower = text.casefold()
         if "leading issue" in lower or lower.startswith("action plan"):
             continue
-        if int(shape.height) < 500_000 or int(shape.top) < 800_000:
+        if int(shape.height) < 350_000 or int(shape.top) < 800_000:
             continue
 
         mid_x = int(shape.left) + int(shape.width) // 2

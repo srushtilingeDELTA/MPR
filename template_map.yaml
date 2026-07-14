@@ -136,18 +136,21 @@ slides:
     elements:
       - type: clear_narrative
 
-  # PPT 11 — PMI charts
+  # PPT 11 — PMI Compliance from New GSE MPR Workings.xlsx → PMI tab
+  # Table screenshot (Regions Motorized/Stationary + Non-Motorized) + Motorized/Stationary
+  # Excel graph screenshots. Leading Issues / Action Plans emptied.
   - index: 10
     name: pmi
     keep_title: true
     elements:
-      - type: chart_slide
-        workbook: actuals
-        charts:
-          - title: Motorized
-            patterns: ["PM (M)"]
-          - title: Stationary
-            patterns: ["PM (S)"]
+      - type: pmi_workings_panels
+        workbook: workings
+        sheet: "PMI"
+        sheet_match: ["PMI", "PMI COMPLIANCE", "PM"]
+        prefer_excel_com: true
+        fit: contain
+        clear_narrative: true
+        optional: false
 
   # PPT 12 — ISR charts
   - index: 11

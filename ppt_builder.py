@@ -746,6 +746,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_finance_workings_panels(slide, data, element) and not optional:
             logger.warning("No Workings FINANCE panels for element %s", element)
+    elif etype == "pmi_workings_panels":
+        from pmi_workings import apply_pmi_workings_panels
+
+        if not apply_pmi_workings_panels(slide, data, element) and not optional:
+            logger.warning("No Workings PMI panels for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
@@ -1061,6 +1066,61 @@ def _verify_output(prs: Presentation) -> None:
             logger.warning("%s Finance comments narrative still has text: %s", label, leftover[:2])
         else:
             print(f"VERIFY {label} Finance comments: Leading Issues / Action Plan boxes are empty")
+
+    # Slide 11 PMI: table screenshot + 2 Excel graph screenshots; narrative empty.
+    pmi = prs.slides[10]
+    pmi_ole = sum(
+        1
+        for s in pmi.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT
+    )
+    pmi_charts = sum(1 for s in pmi.shapes if getattr(s, "has_chart", False))
+    pmi_pics = [
+        s
+        for s in pmi.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 6_800_000
+    ]
+    pmi_table_pics = [s for s in pmi_pics if int(s.top) < 5_000_000]
+    pmi_chart_pics = [s for s in pmi_pics if int(s.top) >= 5_000_000]
+    print(
+        f"VERIFY slide 11 PMI: {len(pmi_table_pics)} table pic(s), "
+        f"{len(pmi_chart_pics)} graph screenshot(s), "
+        f"{pmi_ole} OLE, {pmi_charts} native chart(s)"
+    )
+    if len(pmi_table_pics) < 1:
+        logger.warning("Slide 11 PMI expected Workings PMI table screenshot, found none")
+    if len(pmi_chart_pics) < 2:
+        logger.warning(
+            "Slide 11 PMI expected 2 Excel graph screenshots (Motorized/Stationary), found %s",
+            len(pmi_chart_pics),
+        )
+    if pmi_ole:
+        logger.warning("Slide 11 PMI still has %s embedded OLE object(s)", pmi_ole)
+    if pmi_charts:
+        logger.warning(
+            "Slide 11 PMI still has %s native chart(s) — expected Excel graph screenshots",
+            pmi_charts,
+        )
+    pmi_bodies = [
+        s
+        for s in pmi.shapes
+        if getattr(s, "has_text_frame", False)
+        and "textbox" in (s.name or "").casefold()
+        and int(s.height) > 400_000
+        and int(s.top) > 1_000_000
+        and int(s.left) >= 8_000_000
+    ]
+    pmi_leftover = [
+        (s.text_frame.text or "").strip()
+        for s in pmi_bodies
+        if (s.text_frame.text or "").strip()
+        and "leading" not in (s.text_frame.text or "").casefold()
+        and not (s.text_frame.text or "").casefold().startswith("action plan")
+    ]
+    if pmi_leftover:
+        logger.warning("Slide 11 PMI narrative still has text: %s", pmi_leftover[:2])
+    else:
+        print("VERIFY slide 11 PMI narrative: Leading Issues / Action Plan boxes are empty")
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
