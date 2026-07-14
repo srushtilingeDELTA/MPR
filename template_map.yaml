@@ -152,23 +152,28 @@ slides:
         clear_narrative: true
         optional: false
 
-  # PPT 12 — ISR charts
+  # PPT 12 — ISR Motorized from New GSE MPR Workings.xlsx → ISR tab
+  # Regions RELIABILITY + SEVERITY table + Reliability/Severity Excel graphs only.
+  # Leading Issues / Action Plans emptied.
   - index: 11
     name: isr
     keep_title: true
     elements:
-      - type: chart_slide
-        workbook: actuals
-        charts:
-          - title: Reliability
-            patterns: ["REL"]
-          - title: Severity
-            patterns: ["SEV"]
+      - type: isr_workings_panels
+        workbook: workings
+        sheet: "ISR"
+        sheet_match: ["ISR", "ISR MOTORIZED"]
+        prefer_excel_com: true
+        fit: contain
+        clear_narrative: true
+        optional: false
 
-  # PPT 13 — ISR narrative (manual)
+  # PPT 13 — ISR comments: keep layout; empty Leading Issues / Action Plan boxes
   - index: 12
     name: isr_comments
     keep_title: true
+    elements:
+      - type: clear_narrative
 
   # PPT 14-19 — Entity scorecards (live sheets in 2026 - GSE Scorecards.xlsx)
   - index: 13

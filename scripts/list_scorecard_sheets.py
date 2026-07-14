@@ -20,6 +20,7 @@ SUGGESTED = [
     (6, "workings PEOPLE table + 3 Excel graph screenshots"),
     (7, "workings FINANCE Regions/BUDGET/OVERTIME/TOTAL HOURS screenshot"),
     (10, "workings PMI Regions Mot/Stat+Non-Mot table + Mot/Stat graphs"),
+    (11, "workings ISR Regions Rel/Sev table + Rel/Sev graphs"),
     (13, "North summary"),
     (14, "North comparison"),
     (15, "South summary"),
