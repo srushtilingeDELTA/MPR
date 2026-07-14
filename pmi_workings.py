@@ -104,17 +104,13 @@ def _find_regions_pmi_header(ws, *, max_row: int = 40, max_col: int = 40) -> tup
         if "region" not in blob:
             continue
 
-        # Prefer the true PMI regions dashboard (Mot/Stat and/or Non-Motorized titles).
+        # Require the exact Mot/Stat + Non-Motorized Regions dashboard (image 1).
         has_mot = "motorized" in blob or "stationary" in blob
         has_nme = "non-motor" in blob or "non motor" in blob or "nme" in blob
         next_blob = _row_blob(ws, row + 1, scan_cols)
         has_mtd = "mtd" in blob or "mtd" in next_blob or "actual" in next_blob
-        if not has_mtd:
+        if not has_mtd or not has_mot or not has_nme:
             continue
-        if not (has_mot or has_nme):
-            # Still allow a plain Regions/MTD/YTD/Score block.
-            if "score" not in blob and "score" not in next_blob and "ytd" not in blob and "ytd" not in next_blob:
-                continue
 
         start_col = None
         mot_col = None
@@ -151,8 +147,8 @@ def _find_regions_pmi_header(ws, *, max_row: int = 40, max_col: int = 40) -> tup
             # Mot/Stat block alone is typically 6 metric cols after Regions.
             end_col = max(end_col, start_col + 6)
 
-        # Typical full Mot/Stat + Non-Motorized layout is ~14 cols (A–N).
-        end_col = max(end_col, start_col + 12 if nme_col or has_nme else start_col + 6)
+        # Full Mot/Stat + Non-Motorized layout is ~14 cols (A–N).
+        end_col = max(end_col, start_col + 12)
 
         print(
             f">>> PMI Regions header row {row}: "
@@ -390,7 +386,8 @@ def apply_pmi_workings_panels(slide, data, element: dict) -> bool:
     """Fill PMI Compliance from Workings!PMI Regions table + Mot/Stat graphs."""
     workbook = element.get("workbook", "workings")
     prefer_com = bool(element.get("prefer_excel_com", True))
-    fit = str(element.get("fit", "contain")).lower()
+    fit = str(element.get("fit", "fill")).lower()
+    chart_fit = str(element.get("chart_fit", "contain")).lower()
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
@@ -421,7 +418,7 @@ def apply_pmi_workings_panels(slide, data, element: dict) -> bool:
     out_dir.mkdir(parents=True, exist_ok=True)
     placed = 0
 
-    # 1) Regions MOTORIZED/STATIONARY + NON-MOTORIZED table screenshot.
+    # 1) ONLY the Regions MOTORIZED/STATIONARY + NON-MOTORIZED PMI table.
     table_png = None
     try:
         start_row, end_row, start_col, end_col = _discover_pmi_table(workbook_bytes, sheet_name)
@@ -446,7 +443,7 @@ def apply_pmi_workings_panels(slide, data, element: dict) -> bool:
         print(f">>> ERROR: PMI Regions table screenshot failed: {exc}")
         table_png = None
 
-    # 2) Motorized + Stationary Excel graph screenshots only.
+    # 2) Motorized + Stationary Excel graphs (same tab) for the bottom chart slots.
     charts_by_key: dict[str, bytes] = {}
     if prefer_com:
         try:
@@ -460,8 +457,10 @@ def apply_pmi_workings_panels(slide, data, element: dict) -> bool:
     else:
         print(">>> ERROR: PMI graphs require Excel COM screenshots (prefer_excel_com=true)")
 
-    if not table_png and not charts_by_key:
-        logger.warning("No PMI screenshots from workings/%s", sheet_name)
+    # Table is required for the slide layout; graphs are expected but optional if COM fails.
+    if not table_png:
+        logger.warning("PMI slide requires the Regions Mot/Stat+Non-Mot table screenshot")
+        print(">>> ERROR: PMI slide missing required Regions MOTORIZED/STATIONARY + NON-MOTORIZED table")
         return False
 
     removed = _remove_pmi_content_shapes(slide)

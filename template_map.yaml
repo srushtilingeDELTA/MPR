@@ -137,8 +137,9 @@ slides:
       - type: clear_narrative
 
   # PPT 11 — PMI Compliance from New GSE MPR Workings.xlsx → PMI tab
-  # Regions MOTORIZED/STATIONARY + NON-MOTORIZED PMI table + Motorized/Stationary
-  # Excel graph screenshots. Leading Issues / Action Plans emptied.
+  # Paste ONLY the Regions MOTORIZED/STATIONARY + NON-MOTORIZED PMI table, plus
+  # Motorized/Stationary Excel graphs (template layout). Leading Issues / Action
+  # Plans emptied (editable text boxes kept).
   - index: 10
     name: pmi
     keep_title: true
@@ -148,7 +149,8 @@ slides:
         sheet: "PMI"
         sheet_match: ["PMI", "PMI COMPLIANCE"]
         prefer_excel_com: true
-        fit: contain
+        # fill so the Regions table occupies the template OLE slot like the sample slide
+        fit: fill
         clear_narrative: true
         optional: false
 
