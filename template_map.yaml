@@ -167,7 +167,7 @@ slides:
         sheet_match: ["ISR", "ISR MOTORIZED"]
         prefer_excel_com: true
         fit: fill
-        chart_fit: contain
+        chart_fit: fill
         clear_narrative: true
         optional: false
 

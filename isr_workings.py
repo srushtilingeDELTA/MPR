@@ -400,9 +400,9 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
     """Fill ISR Motorized from Workings!ISR Regions Rel/Sev table + graphs."""
     workbook = element.get("workbook", "workings")
     prefer_com = bool(element.get("prefer_excel_com", True))
-    # Table fills the upper slot (Excel scorecard look); graphs use larger bottom boxes.
+    # Table fills the upper slot; graphs fill the enlarged bottom boxes.
     fit = str(element.get("fit", "fill")).lower()
-    chart_fit = str(element.get("chart_fit", "contain")).lower()
+    chart_fit = str(element.get("chart_fit", "fill")).lower()
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
