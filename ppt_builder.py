@@ -1031,6 +1031,37 @@ def _verify_output(prs: Presentation) -> None:
             "VERIFY slide 8 Finance: Regions/BUDGET/OVERTIME/TOTAL HOURS screenshot present"
         )
 
+    # Slides 9-10 Finance comments: Leading Issues / Action Plan body boxes empty but present.
+    for slide_idx, label in ((8, "slide 9"), (9, "slide 10")):
+        slide = prs.slides[slide_idx]
+        bodies = [
+            s
+            for s in slide.shapes
+            if getattr(s, "has_text_frame", False)
+            and "textbox" in (s.name or "").casefold()
+            and int(s.height) > 500_000
+            and int(s.top) > 1_000_000
+        ]
+        leftover = [
+            (s.text_frame.text or "").strip()
+            for s in bodies
+            if (s.text_frame.text or "").strip()
+            and "leading" not in (s.text_frame.text or "").casefold()
+            and not (s.text_frame.text or "").casefold().startswith("action plan")
+            and "budget" not in (s.text_frame.text or "").casefold()
+        ]
+        print(f"VERIFY {label} Finance comments body text boxes: {len(bodies)}")
+        if len(bodies) < 2:
+            logger.warning(
+                "%s Finance comments expected empty editable narrative text boxes, found %s",
+                label,
+                len(bodies),
+            )
+        if leftover:
+            logger.warning("%s Finance comments narrative still has text: %s", label, leftover[:2])
+        else:
+            print(f"VERIFY {label} Finance comments: Leading Issues / Action Plan boxes are empty")
+
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:
     ppt_cfg = config["powerpoint"]

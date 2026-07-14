@@ -123,14 +123,18 @@ slides:
         fit: contain
         optional: false
 
-  # PPT 9-10 — Finance narrative (manual)
+  # PPT 9-10 — Finance comments: keep layout; empty Leading Issues / Action Plan boxes
   - index: 8
     name: finance_comments_1
     keep_title: true
+    elements:
+      - type: clear_narrative
 
   - index: 9
     name: finance_comments_2
     keep_title: true
+    elements:
+      - type: clear_narrative
 
   # PPT 11 — PMI charts
   - index: 10
