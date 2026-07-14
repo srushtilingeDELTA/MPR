@@ -17,7 +17,7 @@ SUGGESTED = [
     (3, "System sections: People/Finance/Overall"),
     (4, "GIR native tables + chart from Workings!GIR"),
     (5, "workings EAC/ASAP single table screenshot"),
-    (6, "workings PEOPLE table + chart screenshots"),
+    (6, "workings PEOPLE table + 3 Excel graph screenshots"),
     (7, "workings SCORECARD SUMMARIES / sheet 0 (finance overview)"),
     (13, "North summary"),
     (14, "North comparison"),

@@ -89,7 +89,9 @@ slides:
         # sheet: "EAC"
         # sheet_match: ["EAC", "ASAP"]
   # PPT 7 — People from New GSE MPR Workings.xlsx → PEOPLE tab
-  # Only the first PEOPLE MTD/YTD/Score table + the three Excel charts.
+  # First PEOPLE MTD/YTD/Score table screenshot + screenshots of the three Excel
+  # graphs on that tab (Leadership Engagement, Psychological Safety, Accountability).
+  # No native PowerPoint chart rebuilds — Excel graph screenshots only.
   # Leading Issues / Action Plans cleared to empty editable boxes.
   - index: 6
     name: people

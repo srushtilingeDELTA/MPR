@@ -967,7 +967,7 @@ def _verify_output(prs: Presentation) -> None:
     else:
         print("VERIFY slide 6 EA narrative: Leading Issues / Action Plan boxes are empty")
 
-    # Slide 7 People: first PEOPLE table + 3 right-side charts.
+    # Slide 7 People: table screenshot + 3 Excel graph screenshots on the right.
     people = prs.slides[6]
     people_tables = sum(1 for s in people.shapes if getattr(s, "has_table", False))
     people_charts = sum(1 for s in people.shapes if getattr(s, "has_chart", False))
@@ -976,31 +976,36 @@ def _verify_output(prs: Presentation) -> None:
         for s in people.shapes
         if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 6_000_000
     ]
-    right_charts = [
+    right_pics = [
         s
         for s in people.shapes
-        if (getattr(s, "has_chart", False) or s.shape_type == MSO_SHAPE_TYPE.PICTURE)
+        if s.shape_type == MSO_SHAPE_TYPE.PICTURE
         and int(s.left) >= 7_500_000
         and int(s.top) < 6_200_000
     ]
     print(
         f"VERIFY slide 7 People: {len(people_pics)} content picture(s), "
-        f"{people_tables} table(s), {people_charts} native chart(s), "
-        f"{len(right_charts)} right-side chart item(s)"
+        f"{len(right_pics)} right-side graph screenshot(s), "
+        f"{people_tables} table(s), {people_charts} native chart(s)"
     )
     if len(people_pics) < 1:
         logger.warning("Slide 7 People expected Workings PEOPLE table screenshot, found none")
     if people_tables:
         logger.warning("Slide 7 People still has %s native table(s)", people_tables)
-    if len(right_charts) < 3:
+    if people_charts:
         logger.warning(
-            "Slide 7 People expected 3 right-side charts "
+            "Slide 7 People still has %s native chart(s) — expected Excel graph screenshots only",
+            people_charts,
+        )
+    if len(right_pics) < 3:
+        logger.warning(
+            "Slide 7 People expected 3 Excel graph screenshots on the right "
             "(Leadership Engagement, Psychological Safety, Accountability), found %s",
-            len(right_charts),
+            len(right_pics),
         )
     else:
         print(
-            "VERIFY slide 7 People: 3 right-side charts present "
+            "VERIFY slide 7 People: 3 Excel graph screenshots on the right "
             "(Leadership Engagement / Psychological Safety / Accountability)"
         )
 

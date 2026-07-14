@@ -1,14 +1,14 @@
 """People slide (PPT 7) from New GSE MPR Workings.xlsx → PEOPLE tab.
 
-Screenshots only:
+Screenshots only (no native PowerPoint chart rebuilds):
   1. The first PEOPLE MTD/YTD/Score table
-  2. The three Excel graphs on that tab:
+  2. The three Excel graphs on that same PEOPLE tab:
        - Leadership Engagement
        - Psychological Safety
        - Accountability
 
-Charts are captured with Excel COM CopyPicture / Chart.Export (true screenshots),
-then placed in a right-side stack. No native PowerPoint chart rebuilds.
+Graphs are true Excel screenshots via Chart.Export / CopyPicture, then stacked
+on the right side of the slide.
 """
 
 from __future__ import annotations
@@ -181,68 +181,151 @@ def _match_chart_spec(title: str) -> dict | None:
     return None
 
 
-def _screenshot_excel_chart(chart_obj, *, label: str) -> bytes:
-    """True screenshot of an Excel chart object (CopyPicture, then Chart.Export)."""
-    errors: list[str] = []
-
-    # 1) CopyPicture of the chart object / chart area → clipboard PNG.
-    for appearance, fmt in ((1, 2), (2, 2)):  # xlScreen/xlPrinter + xlBitmap
-        for copier in (
-            lambda: chart_obj.CopyPicture(Appearance=appearance, Format=fmt),
-            lambda: chart_obj.Chart.CopyPicture(Appearance=appearance, Format=fmt),
-            lambda: chart_obj.Chart.ChartArea.Copy(),
-        ):
-            try:
-                try:
-                    import win32clipboard  # type: ignore
-
-                    win32clipboard.OpenClipboard()
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.CloseClipboard()
-                except Exception:
-                    pass
-                copier()
-                for _ in range(40):
-                    time.sleep(0.15)
-                    grabbed = _clipboard_image()
-                    if grabbed is None:
-                        continue
-                    png = _png_from_pil(grabbed)
-                    return _validate_capture(
-                        png, label=label, min_w=80, min_h=60, require_wide=False
-                    )
-            except Exception as exc:
-                errors.append(f"CopyPicture:{exc}")
-
-    # 2) Chart.Export fallback.
-    export_path = Path(tempfile.gettempdir()) / f"mpr_people_chart_{time.time_ns()}.png"
+def _chart_handle(obj):
+    """Return (chart_api, exportable_shape) for a ChartObject or Shape."""
     try:
-        if export_path.exists():
-            export_path.unlink()
-        chart_obj.Chart.Export(str(export_path))
-        if export_path.exists() and export_path.stat().st_size > 1500:
-            data = export_path.read_bytes()
-            try:
-                return _validate_capture(
-                    data, label=f"{label} Export", min_w=80, min_h=60, require_wide=False
-                )
-            except Exception:
-                with Image.open(io.BytesIO(data)) as img:
-                    return _png_from_pil(img)
-    except Exception as exc:
-        errors.append(f"Export:{exc}")
-    finally:
+        return obj.Chart, obj
+    except Exception:
+        return None, obj
+
+
+def _export_chart_png(chart_api, exportable, *, label: str) -> bytes:
+    """Screenshot one Excel graph. Prefer Chart.Export (no clipboard / Edge race)."""
+    errors: list[str] = []
+    export_path = Path(tempfile.gettempdir()) / f"mpr_people_chart_{time.time_ns()}.png"
+
+    # 1) Chart.Export — true image of the Excel graph, avoids SharePoint/Edge clipboard steal.
+    if chart_api is not None:
         try:
             if export_path.exists():
                 export_path.unlink()
-        except Exception:
-            pass
+            try:
+                chart_api.Export(str(export_path), "PNG")
+            except Exception:
+                chart_api.Export(str(export_path))
+            if export_path.exists() and export_path.stat().st_size > 1500:
+                data = export_path.read_bytes()
+                try:
+                    return _validate_capture(
+                        data, label=f"{label} Export", min_w=80, min_h=60, require_wide=False
+                    )
+                except Exception:
+                    with Image.open(io.BytesIO(data)) as img:
+                        return _png_from_pil(img)
+        except Exception as exc:
+            errors.append(f"Export:{exc}")
+        finally:
+            try:
+                if export_path.exists():
+                    export_path.unlink()
+            except Exception:
+                pass
+
+    # 2) CopyPicture → clipboard PNG (chart object / chart area / shape).
+    copiers = []
+    for appearance, fmt in ((1, 2), (2, 2)):  # xlScreen/xlPrinter + xlBitmap
+        copiers.append(
+            ("shape.CopyPicture", appearance, fmt, lambda a=appearance, f=fmt: exportable.CopyPicture(Appearance=a, Format=f))
+        )
+        if chart_api is not None:
+            copiers.append(
+                (
+                    "chart.CopyPicture",
+                    appearance,
+                    fmt,
+                    lambda a=appearance, f=fmt: chart_api.CopyPicture(Appearance=a, Format=f),
+                )
+            )
+    if chart_api is not None:
+        copiers.append(("ChartArea.Copy", 0, 0, lambda: chart_api.ChartArea.Copy()))
+
+    for name, _appearance, _fmt, copier in copiers:
+        try:
+            try:
+                import win32clipboard  # type: ignore
+
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+            copier()
+            for _ in range(40):
+                time.sleep(0.15)
+                grabbed = _clipboard_image()
+                if grabbed is None:
+                    continue
+                png = _png_from_pil(grabbed)
+                return _validate_capture(
+                    png, label=f"{label} {name}", min_w=80, min_h=60, require_wide=False
+                )
+        except Exception as exc:
+            errors.append(f"{name}:{exc}")
 
     raise RuntimeError(f"{label} screenshot failed ({'; '.join(errors) or 'no image'})")
 
 
+def _screenshot_excel_chart(chart_obj, *, label: str) -> bytes:
+    """True screenshot of an Excel chart object (Export, then CopyPicture)."""
+    chart_api, exportable = _chart_handle(chart_obj)
+    return _export_chart_png(chart_api, exportable, label=label)
+
+
+def _iter_people_chart_objects(ws) -> list[tuple[float, str, object]]:
+    """Collect floating Excel graphs on the PEOPLE sheet (ChartObjects + chart Shapes)."""
+    found: list[tuple[float, str, object]] = []
+    seen_names: set[str] = set()
+
+    def _add(obj, *, source: str) -> None:
+        try:
+            name = str(getattr(obj, "Name", "") or "")
+        except Exception:
+            name = ""
+        key = name.casefold() or f"{source}:{id(obj)}"
+        if key in seen_names:
+            return
+        seen_names.add(key)
+        try:
+            top = float(getattr(obj, "Top", len(found) * 100))
+        except Exception:
+            top = float(len(found) * 100)
+        title = _com_chart_title(obj)
+        if not title and name:
+            title = name
+        found.append((top, title, obj))
+        print(f">>> Found Excel graph on PEOPLE ({source}): {title or name or 'untitled'!r}")
+
+    try:
+        count = int(ws.ChartObjects().Count)
+    except Exception:
+        count = 0
+    for idx in range(1, count + 1):
+        try:
+            _add(ws.ChartObjects(idx), source=f"ChartObjects[{idx}]")
+        except Exception as exc:
+            logger.warning("PEOPLE ChartObjects(%s) unreadable: %s", idx, exc)
+
+    # Some workbooks expose charts only through Shapes (msoChart = 3).
+    try:
+        shape_count = int(ws.Shapes.Count)
+    except Exception:
+        shape_count = 0
+    for idx in range(1, shape_count + 1):
+        try:
+            shape = ws.Shapes(idx)
+            shape_type = int(getattr(shape, "Type", 0) or 0)
+            if shape_type != 3:  # msoChart
+                continue
+            _add(shape, source=f"Shapes[{idx}]")
+        except Exception:
+            continue
+
+    found.sort(key=lambda item: item[0])
+    return found
+
+
 def _screenshot_named_people_charts(workbook_path: Path, sheet_name: str) -> dict[str, bytes]:
-    """Screenshot PEOPLE sheet charts keyed by leadership/psychological/accountability."""
+    """Screenshot PEOPLE-tab Excel graphs keyed by leadership/psychological/accountability."""
     excel = None
     wb = None
     by_key: dict[str, bytes] = {}
@@ -252,53 +335,65 @@ def _screenshot_named_people_charts(workbook_path: Path, sheet_name: str) -> dic
         ws = _find_com_worksheet(wb, sheet_name)
         ws.Activate()
         try:
+            excel.ActiveWindow.Zoom = 100
+        except Exception:
+            pass
+        try:
             excel.Goto(ws.Range("A1"), True)
         except Exception:
             pass
         time.sleep(0.4)
 
-        count = int(ws.ChartObjects().Count)
-        print(f">>> PEOPLE sheet has {count} Excel chart object(s) to screenshot")
-        if count < 3:
-            logger.warning("Expected 3 PEOPLE charts, Excel reports %s ChartObjects", count)
+        charts = _iter_people_chart_objects(ws)
+        print(f">>> PEOPLE sheet: {len(charts)} Excel graph(s) to screenshot")
+        if len(charts) < 3:
+            logger.warning(
+                "Expected 3 PEOPLE Excel graphs, found %s — will screenshot whatever is present",
+                len(charts),
+            )
+            print(
+                f">>> WARNING: expected 3 PEOPLE graphs on the Excel tab, found {len(charts)}"
+            )
 
         scored: list[tuple[float, str, bytes]] = []
-        for idx in range(1, count + 1):
-            chart_obj = ws.ChartObjects(idx)
-            title = _com_chart_title(chart_obj)
-            label = f"PEOPLE chart {idx} ({title or 'untitled'})"
+        for idx, (top, title, chart_obj) in enumerate(charts, start=1):
+            label = f"PEOPLE graph {idx} ({title or 'untitled'})"
             try:
-                # Bring chart into view so CopyPicture is not blank.
                 try:
                     chart_obj.Activate()
                 except Exception:
-                    pass
-                time.sleep(0.2)
-                top = float(getattr(chart_obj, "Top", idx * 100))
+                    try:
+                        chart_obj.Select()
+                    except Exception:
+                        pass
+                time.sleep(0.25)
                 data = _screenshot_excel_chart(chart_obj, label=label)
                 scored.append((top, title, data))
-                print(f">>> Screenshotted Excel graph {idx}/{count}: {title!r} ({len(data)} bytes)")
+                print(
+                    f">>> Screenshotted Excel PEOPLE graph {idx}/{len(charts)}: "
+                    f"{title!r} ({len(data)} bytes)"
+                )
             except Exception as exc:
                 logger.warning("%s failed: %s", label, exc)
-                print(f">>> WARNING: could not screenshot PEOPLE chart {idx}: {exc}")
+                print(f">>> WARNING: could not screenshot PEOPLE graph {idx}: {exc}")
 
         scored.sort(key=lambda item: item[0])
         for top, title, data in scored:
             spec = _match_chart_spec(title)
             if spec and spec["key"] not in by_key:
                 by_key[spec["key"]] = data
-                print(f">>> Matched screenshot to '{spec['title']}' (Excel title {title!r})")
+                print(f">>> Matched Excel screenshot to '{spec['title']}' (title {title!r})")
             else:
                 ordered_fallback.append(data)
 
-        # If titles are blank/generic, assign remaining screenshots top→bottom.
+        # Blank/generic titles → assign remaining screenshots top→bottom.
         for spec in PEOPLE_CHART_SPECS:
             if spec["key"] in by_key:
                 continue
             if not ordered_fallback:
                 break
             by_key[spec["key"]] = ordered_fallback.pop(0)
-            print(f">>> Assigned position-ordered screenshot to '{spec['title']}'")
+            print(f">>> Assigned top→bottom Excel screenshot to '{spec['title']}'")
     finally:
         try:
             if wb is not None:
@@ -388,9 +483,13 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
         table_png = None
 
     # 2) Screenshot the three Excel graphs from the PEOPLE tab (COM required).
+    # Never rebuild native PowerPoint charts — only paste Excel graph screenshots.
     charts_by_key: dict[str, bytes] = {}
     if not prefer_com:
-        print(">>> ERROR: PEOPLE charts require Excel COM screenshots (prefer_excel_com=true)")
+        print(
+            ">>> ERROR: PEOPLE graphs must be screenshots from Excel "
+            "(set prefer_excel_com: true). Native PPT charts are not used."
+        )
     else:
         try:
             with tempfile.TemporaryDirectory(prefix="mpr_people_") as tmp:
@@ -398,8 +497,8 @@ def apply_people_workings_panels(slide, data, element: dict) -> bool:
                 path.write_bytes(workbook_bytes)
                 charts_by_key = _screenshot_named_people_charts(path, sheet_name)
         except Exception as exc:
-            logger.error("PEOPLE Excel chart screenshots unavailable: %s", exc)
-            print(f">>> ERROR: could not screenshot PEOPLE graphs from Excel: {exc}")
+            logger.error("PEOPLE Excel graph screenshots unavailable: %s", exc)
+            print(f">>> ERROR: could not screenshot PEOPLE graphs from Excel PEOPLE tab: {exc}")
 
     if not table_png and not charts_by_key:
         logger.warning("No PEOPLE table/chart screenshots from workings/%s", sheet_name)

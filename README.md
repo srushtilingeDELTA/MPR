@@ -64,9 +64,9 @@ python main.py
 | 1 | Planned Discussion agenda topics + times |
 | 2 | System scorecard screenshot: Safety & Security + Customer Experience + Operations |
 | 3 | System scorecard screenshot: People + Finance + Overall and Opportunities |
-| 4 | GIR multi-panel screenshots from workings workbook (`GIR` tab); Leading Issues / Action Plan cleared for manual entry |
-| 5 | EA / ASAP screenshot when a matching scorecard sheet exists |
-| 6 | People table + charts (actuals) |
+| 4 | GIR native tables + chart filled from workings workbook (`GIR` tab); Leading Issues / Action Plan cleared |
+| 5 | EA / ASAP table screenshot from workings workbook; Leading Issues / Action Plan cleared |
+| 6 | People: first PEOPLE table screenshot + 3 Excel graph screenshots (Leadership / Psych Safety / Accountability) from Workings `PEOPLE` tab |
 | 7 | Finance overview screenshot from workings workbook |
 | 10 | PMI Motorized / Stationary charts |
 | 11 | ISR Reliability / Severity charts |
