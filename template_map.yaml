@@ -119,7 +119,8 @@ slides:
         sheet: "FINANCE"
         sheet_match: ["FINANCE", "Finance"]
         prefer_excel_com: true
-        fit: fill
+        # contain so the full wide table (incl. TOTAL HOURS) stays visible
+        fit: contain
         optional: false
 
   # PPT 9-10 — Finance narrative (manual)
