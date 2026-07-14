@@ -38,13 +38,26 @@ from scorecard_screenshots import (
 
 logger = logging.getLogger(__name__)
 
-# Template table picture slot on ISR MOTORIZED (Picture 9).
-ISR_TABLE_BOX = (313_417, 1_056_453, 8_014_153, 2_840_631)
+# Template layout tuned so the Regions Rel/Sev table reads cleanly and the
+# Reliability / Severity graphs are larger (above the footer logo).
+ISR_TABLE_BOX = (313_417, 1_000_000, 8_014_153, 2_250_000)
 
-# Bottom native chart slots.
+_CHART_LEFT = 313_417
+_CHART_TOP = 3_350_000
+_CHART_BOTTOM = 6_200_000
+_CHART_GAP = 120_000
+_CHART_TOTAL_WIDTH = 8_014_153
+_CHART_HEIGHT = _CHART_BOTTOM - _CHART_TOP
+_CHART_WIDTH = (_CHART_TOTAL_WIDTH - _CHART_GAP) // 2
+
 ISR_CHART_BOXES = {
-    "reliability": (372_129, 4_299_857, 4_167_214, 1_794_522),
-    "severity": (4_647_937, 4_299_857, 3_576_773, 1_792_224),
+    "reliability": (_CHART_LEFT, _CHART_TOP, _CHART_WIDTH, _CHART_HEIGHT),
+    "severity": (
+        _CHART_LEFT + _CHART_WIDTH + _CHART_GAP,
+        _CHART_TOP,
+        _CHART_WIDTH,
+        _CHART_HEIGHT,
+    ),
 }
 
 ISR_CHART_SPECS = [
@@ -387,7 +400,9 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
     """Fill ISR Motorized from Workings!ISR Regions Rel/Sev table + graphs."""
     workbook = element.get("workbook", "workings")
     prefer_com = bool(element.get("prefer_excel_com", True))
-    fit = str(element.get("fit", "contain")).lower()
+    # Table fills the upper slot (Excel scorecard look); graphs use larger bottom boxes.
+    fit = str(element.get("fit", "fill")).lower()
+    chart_fit = str(element.get("chart_fit", "contain")).lower()
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
@@ -498,7 +513,7 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
             top=top,
             max_width=width,
             max_height=height,
-            fit=fit,
+            fit=chart_fit,
         )
         placed += 1
         try:
@@ -507,7 +522,7 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
                 img.save(debug)
                 print(
                     f">>> ISR '{spec['title']}' graph screenshot placed "
-                    f"({img.width}x{img.height}) -> {debug.name}"
+                    f"({img.width}x{img.height}, fit={chart_fit}) -> {debug.name}"
                 )
         except Exception:
             print(f">>> ISR '{spec['title']}' graph screenshot placed")
