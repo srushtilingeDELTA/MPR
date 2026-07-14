@@ -19,7 +19,7 @@ SUGGESTED = [
     (5, "workings EAC/ASAP single table screenshot"),
     (6, "workings PEOPLE table + 3 Excel graph screenshots"),
     (7, "workings FINANCE Regions/BUDGET/OVERTIME/TOTAL HOURS screenshot"),
-    (10, "workings PMI table + Motorized/Stationary graph screenshots"),
+    (10, "workings PMI Regions Mot/Stat+Non-Mot table + Mot/Stat graphs"),
     (13, "North summary"),
     (14, "North comparison"),
     (15, "South summary"),

@@ -1088,7 +1088,9 @@ def _verify_output(prs: Presentation) -> None:
         f"{pmi_ole} OLE, {pmi_charts} native chart(s)"
     )
     if len(pmi_table_pics) < 1:
-        logger.warning("Slide 11 PMI expected Workings PMI table screenshot, found none")
+        logger.warning(
+            "Slide 11 PMI expected Workings MOTORIZED/STATIONARY PMI table screenshot, found none"
+        )
     if len(pmi_chart_pics) < 2:
         logger.warning(
             "Slide 11 PMI expected 2 Excel graph screenshots (Motorized/Stationary), found %s",
