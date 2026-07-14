@@ -156,7 +156,7 @@ slides:
 
   # PPT 12 — ISR Motorized from New GSE MPR Workings.xlsx → ISR tab
   # Regions RELIABILITY + SEVERITY table (two sections) + Rel/Sev Excel graphs
-  # sized to the template chart slots. Leading Issues / Action Plans emptied.
+  # slightly larger than the native template chart slots. Narrative emptied.
   - index: 11
     name: isr
     keep_title: true

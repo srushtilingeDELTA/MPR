@@ -40,14 +40,15 @@ logger = logging.getLogger(__name__)
 
 # Match the ISR MOTORIZED template layout (slide 12):
 #   - Regions | RELIABILITY | SEVERITY table in the upper OLE/picture slot
-#   - Reliability / Severity graphs in the original template chart slots
-#     (~4.56" x 1.96" and ~3.91" x 1.96", side-by-side under the table)
+#   - Reliability / Severity graphs under the table (slightly larger than the
+#     original native chart slots, still left of Leading Issues / above logo)
 #   - Leading Issues / Action Plans stay as empty editable boxes on the right
 ISR_TABLE_BOX = (313_417, 1_056_453, 8_014_153, 2_840_631)
 
+# ~15% taller than template chart slots; nudged up into the table→chart gap.
 ISR_CHART_BOXES = {
-    "reliability": (372_129, 4_299_857, 4_167_214, 1_794_522),
-    "severity": (4_647_937, 4_299_857, 3_576_773, 1_792_224),
+    "reliability": (330_000, 4_120_000, 4_250_000, 2_080_000),
+    "severity": (4_680_000, 4_120_000, 3_640_000, 2_080_000),
 }
 
 ISR_CHART_SPECS = [

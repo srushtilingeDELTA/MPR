@@ -1144,18 +1144,18 @@ def _verify_output(prs: Presentation) -> None:
         f"{len(isr_chart_pics)} graph screenshot(s), {isr_charts} native chart(s)"
     )
     if isr_chart_pics:
-        # Template chart slots are ~1.79M EMU tall / ~3.5–4.2M wide; reject
-        # the older oversized (~2.8M tall) placement.
+        # Slightly larger than original template slots (~2.08M tall), but not
+        # the earlier oversized (~2.8M) placement that crowded the footer.
         from isr_workings import ISR_CHART_BOXES
 
         ok_size = 0
         for s in isr_chart_pics:
             h, w = int(s.height), int(s.width)
-            if 1_200_000 <= h <= 1_900_000 and 2_800_000 <= w <= 4_300_000:
+            if 1_500_000 <= h <= 2_200_000 and 2_800_000 <= w <= 4_400_000:
                 ok_size += 1
         if ok_size < 2:
             logger.warning(
-                "Slide 12 ISR graph sizes off template (sizes=%s; expected Rel=%sx%s Sev=%sx%s)",
+                "Slide 12 ISR graph sizes off expected slots (sizes=%s; expected Rel=%sx%s Sev=%sx%s)",
                 [(int(s.width), int(s.height)) for s in isr_chart_pics],
                 ISR_CHART_BOXES["reliability"][2],
                 ISR_CHART_BOXES["reliability"][3],
@@ -1164,8 +1164,8 @@ def _verify_output(prs: Presentation) -> None:
             )
         else:
             print(
-                "VERIFY slide 12 ISR: Reliability/Severity graphs match template "
-                "chart-slot sizing (not oversized)"
+                "VERIFY slide 12 ISR: Reliability/Severity graphs use enlarged "
+                "template-adjacent sizing"
             )
         # Charts must stay left of Leading Issues (~8.42M).
         if any(int(s.left) + int(s.width) > 8_400_000 for s in isr_chart_pics):
