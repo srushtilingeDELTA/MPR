@@ -1780,12 +1780,14 @@ def place_picture_on_slide(
     max_height: int = DEFAULT_HEIGHT,
     fit: str = "fill",
     grow: float = 1.0,
+    align: str = "center",
 ) -> None:
     """Place a PNG into the content area.
 
     fit=fill  -> stretch exactly into the box (matches template picture slots)
     fit=contain -> preserve aspect ratio inside the box
     grow -> expand the target box slightly (e.g. 1.08) so the scorecard reads larger
+    align -> for contain: "center" (default) or "top-left" (anchor to slot origin)
     """
     from pptx.util import Emu
 
@@ -1805,8 +1807,12 @@ def place_picture_on_slide(
         scale = min(max_width / img_w, max_height / img_h)
         width = int(img_w * scale)
         height = int(img_h * scale)
-        left_pos = left + max(0, (max_width - width) // 2)
-        top_pos = top + max(0, (max_height - height) // 2)
+        if str(align).lower() in {"top-left", "topleft", "left", "start"}:
+            left_pos = int(left)
+            top_pos = int(top)
+        else:
+            left_pos = left + max(0, (max_width - width) // 2)
+            top_pos = top + max(0, (max_height - height) // 2)
     else:
         # Fill the template picture rectangle exactly.
         width = int(max_width)

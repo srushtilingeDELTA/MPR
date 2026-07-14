@@ -38,9 +38,11 @@ from scorecard_screenshots import (
 
 logger = logging.getLogger(__name__)
 
-# Match the ISR MOTORIZED template layout:
-#   - Regions | RELIABILITY | SEVERITY table in the upper content slot
-#   - Reliability / Severity graphs sized like the template charts below
+# Match the ISR MOTORIZED template layout (slide 12):
+#   - Regions | RELIABILITY | SEVERITY table in the upper OLE/picture slot
+#   - Reliability / Severity graphs in the original template chart slots
+#     (~4.56" x 1.96" and ~3.91" x 1.96", side-by-side under the table)
+#   - Leading Issues / Action Plans stay as empty editable boxes on the right
 ISR_TABLE_BOX = (313_417, 1_056_453, 8_014_153, 2_840_631)
 
 ISR_CHART_BOXES = {
@@ -399,9 +401,11 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
     """Fill ISR Motorized from Workings!ISR Regions Rel/Sev table + graphs."""
     workbook = element.get("workbook", "workings")
     prefer_com = bool(element.get("prefer_excel_com", True))
-    # Table fills the template OLE-style slot; graphs keep template chart sizes.
+    # Table fills the template OLE-style Rel/Sev slot; graphs stay inside the
+    # original template chart boxes (contain + top-left keeps Excel proportions).
     fit = str(element.get("fit", "fill")).lower()
-    chart_fit = str(element.get("chart_fit", "fill")).lower()
+    chart_fit = str(element.get("chart_fit", "contain")).lower()
+    chart_align = str(element.get("chart_align", "top-left")).lower()
 
     try:
         workbook_bytes = data.store.workbook_bytes(workbook)
@@ -513,6 +517,7 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
             max_width=width,
             max_height=height,
             fit=chart_fit,
+            align=chart_align,
         )
         placed += 1
         try:

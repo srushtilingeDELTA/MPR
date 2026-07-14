@@ -1144,15 +1144,36 @@ def _verify_output(prs: Presentation) -> None:
         f"{len(isr_chart_pics)} graph screenshot(s), {isr_charts} native chart(s)"
     )
     if isr_chart_pics:
-        # Template-sized charts (~1.79M EMU tall), not the oversized slots.
-        ok_size = sum(1 for s in isr_chart_pics if 1_500_000 <= int(s.height) <= 2_100_000)
+        # Template chart slots are ~1.79M EMU tall / ~3.5–4.2M wide; reject
+        # the older oversized (~2.8M tall) placement.
+        from isr_workings import ISR_CHART_BOXES
+
+        ok_size = 0
+        for s in isr_chart_pics:
+            h, w = int(s.height), int(s.width)
+            if 1_200_000 <= h <= 1_900_000 and 2_800_000 <= w <= 4_300_000:
+                ok_size += 1
         if ok_size < 2:
             logger.warning(
-                "Slide 12 ISR graph sizes off template (heights=%s)",
-                [int(s.height) for s in isr_chart_pics],
+                "Slide 12 ISR graph sizes off template (sizes=%s; expected Rel=%sx%s Sev=%sx%s)",
+                [(int(s.width), int(s.height)) for s in isr_chart_pics],
+                ISR_CHART_BOXES["reliability"][2],
+                ISR_CHART_BOXES["reliability"][3],
+                ISR_CHART_BOXES["severity"][2],
+                ISR_CHART_BOXES["severity"][3],
             )
         else:
-            print("VERIFY slide 12 ISR: Reliability/Severity graphs match template sizing")
+            print(
+                "VERIFY slide 12 ISR: Reliability/Severity graphs match template "
+                "chart-slot sizing (not oversized)"
+            )
+        # Charts must stay left of Leading Issues (~8.42M).
+        if any(int(s.left) + int(s.width) > 8_400_000 for s in isr_chart_pics):
+            logger.warning("Slide 12 ISR graph(s) overlap Leading Issues column")
+        if isr_table_pics and any(
+            int(s.left) + int(s.width) > 8_400_000 for s in isr_table_pics
+        ):
+            logger.warning("Slide 12 ISR table overlaps Leading Issues column")
     if len(isr_table_pics) < 1:
         logger.warning(
             "Slide 12 ISR expected Workings Regions RELIABILITY/SEVERITY table screenshot, found none"
