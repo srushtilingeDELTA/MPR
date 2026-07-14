@@ -100,6 +100,8 @@ slides:
         sheet: "PEOPLE"
         sheet_match: ["PEOPLE", "People"]
         chart_count: 3
+        # Leadership Engagement, Psychological Safety, Accountability on the right.
+        chart_fallback: true
         fit: fill
         clear_narrative: true
         optional: false

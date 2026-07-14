@@ -967,7 +967,7 @@ def _verify_output(prs: Presentation) -> None:
     else:
         print("VERIFY slide 6 EA narrative: Leading Issues / Action Plan boxes are empty")
 
-    # Slide 7 People: first PEOPLE table + up to 3 chart screenshots.
+    # Slide 7 People: first PEOPLE table + 3 right-side charts.
     people = prs.slides[6]
     people_tables = sum(1 for s in people.shapes if getattr(s, "has_table", False))
     people_charts = sum(1 for s in people.shapes if getattr(s, "has_chart", False))
@@ -976,21 +976,32 @@ def _verify_output(prs: Presentation) -> None:
         for s in people.shapes
         if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 6_000_000
     ]
+    right_charts = [
+        s
+        for s in people.shapes
+        if (getattr(s, "has_chart", False) or s.shape_type == MSO_SHAPE_TYPE.PICTURE)
+        and int(s.left) >= 7_500_000
+        and int(s.top) < 6_200_000
+    ]
     print(
         f"VERIFY slide 7 People: {len(people_pics)} content picture(s), "
-        f"{people_tables} table(s), {people_charts} chart(s)"
+        f"{people_tables} table(s), {people_charts} native chart(s), "
+        f"{len(right_charts)} right-side chart item(s)"
     )
     if len(people_pics) < 1:
-        logger.warning("Slide 7 People expected Workings PEOPLE screenshot(s), found none")
+        logger.warning("Slide 7 People expected Workings PEOPLE table screenshot, found none")
     if people_tables:
         logger.warning("Slide 7 People still has %s native table(s)", people_tables)
-    if people_charts:
-        logger.warning("Slide 7 People still has %s native chart(s)", people_charts)
-    # Prefer table + 3 charts (=4), but chart export needs Excel COM.
-    if 1 <= len(people_pics) < 4:
+    if len(right_charts) < 3:
+        logger.warning(
+            "Slide 7 People expected 3 right-side charts "
+            "(Leadership Engagement, Psychological Safety, Accountability), found %s",
+            len(right_charts),
+        )
+    else:
         print(
-            f"VERIFY slide 7 People note: {len(people_pics)} picture(s) placed "
-            "(table + charts; 4 total when Excel exports all 3 charts)"
+            "VERIFY slide 7 People: 3 right-side charts present "
+            "(Leadership Engagement / Psychological Safety / Accountability)"
         )
 
 
