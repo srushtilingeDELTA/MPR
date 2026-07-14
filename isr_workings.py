@@ -38,26 +38,14 @@ from scorecard_screenshots import (
 
 logger = logging.getLogger(__name__)
 
-# Template layout tuned so the Regions Rel/Sev table reads cleanly and the
-# Reliability / Severity graphs are larger (above the footer logo).
-ISR_TABLE_BOX = (313_417, 1_000_000, 8_014_153, 2_250_000)
-
-_CHART_LEFT = 313_417
-_CHART_TOP = 3_350_000
-_CHART_BOTTOM = 6_200_000
-_CHART_GAP = 120_000
-_CHART_TOTAL_WIDTH = 8_014_153
-_CHART_HEIGHT = _CHART_BOTTOM - _CHART_TOP
-_CHART_WIDTH = (_CHART_TOTAL_WIDTH - _CHART_GAP) // 2
+# Match the ISR MOTORIZED template layout:
+#   - Regions | RELIABILITY | SEVERITY table in the upper content slot
+#   - Reliability / Severity graphs sized like the template charts below
+ISR_TABLE_BOX = (313_417, 1_056_453, 8_014_153, 2_840_631)
 
 ISR_CHART_BOXES = {
-    "reliability": (_CHART_LEFT, _CHART_TOP, _CHART_WIDTH, _CHART_HEIGHT),
-    "severity": (
-        _CHART_LEFT + _CHART_WIDTH + _CHART_GAP,
-        _CHART_TOP,
-        _CHART_WIDTH,
-        _CHART_HEIGHT,
-    ),
+    "reliability": (372_129, 4_299_857, 4_167_214, 1_794_522),
+    "severity": (4_647_937, 4_299_857, 3_576_773, 1_792_224),
 }
 
 ISR_CHART_SPECS = [
@@ -106,30 +94,40 @@ def _merged_max_col(ws, row: int, col: int) -> int:
     return col
 
 
-def _find_isr_regions_header(ws, *, max_row: int = 40, max_col: int = 40) -> tuple[int, int, int] | None:
-    """Find Regions + RELIABILITY + SEVERITY header.
+def _is_month_header(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+    months = {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec", "ytd",
+    }
+    if t in months:
+        return True
+    return t[:3] in months and len(t) <= 9
 
-    Returns (header_row, start_col, end_col).
+
+def _find_isr_regions_header(ws, *, max_row: int = 40, max_col: int = 40) -> tuple[int, int, int] | None:
+    """Find Regions + RELIABILITY + SEVERITY header (two sections only).
+
+    Returns (header_row, start_col, end_col). Never includes monthly
+    Actual/Goal chart-source grids to the right of SEVERITY.
     """
     scan_cols = min(max(int(ws.max_column or max_col), 20), max_col)
     for row in range(1, min(int(ws.max_row or max_row), max_row) + 1):
         blob = _row_blob(ws, row, scan_cols)
         if "region" not in blob:
             continue
-        has_rel = "reliability" in blob or re.search(r"\brel\b", blob) is not None
-        has_sev = "severity" in blob or re.search(r"\bsev\b", blob) is not None
+        has_rel = "reliability" in blob
+        has_sev = "severity" in blob
         next_blob = _row_blob(ws, row + 1, scan_cols)
         has_mtd = "mtd" in blob or "mtd" in next_blob or "actual" in next_blob
-        if not has_mtd:
+        if not has_mtd or not has_rel or not has_sev:
             continue
-        if not (has_rel or has_sev):
-            if "score" not in blob and "score" not in next_blob:
-                continue
 
         start_col = None
         rel_col = None
         sev_col = None
-        end_col = 1
         for col in range(1, scan_cols + 1):
             text = _norm(_cell_str(ws, row, col))
             if not text:
@@ -138,41 +136,45 @@ def _find_isr_regions_header(ws, *, max_row: int = 40, max_col: int = 40) -> tup
                 start_col = col
             if "reliability" in text or text == "rel":
                 rel_col = col if rel_col is None else min(rel_col, col)
-                end_col = max(end_col, _merged_max_col(ws, row, col))
             if "severity" in text or text == "sev":
                 sev_col = col if sev_col is None else min(sev_col, col)
-                end_col = max(end_col, _merged_max_col(ws, row, col))
-            end_col = max(end_col, col)
 
-        if start_col is None:
+        if start_col is None or sev_col is None:
             continue
-        if not has_rel and not has_sev and rel_col is None and sev_col is None:
-            continue
+
+        # Severity metric block is ~6 cols (Actual .. YTD Score).
+        end_col = max(_merged_max_col(ws, row, sev_col), sev_col + 5)
 
         for r in (row, row + 1, row + 2):
-            for col in range(start_col, scan_cols + 1):
-                if _cell_str(ws, r, col):
+            for col in range(start_col, min(scan_cols, end_col + 2) + 1):
+                text = _cell_str(ws, r, col)
+                if not text:
+                    continue
+                if _is_month_header(text):
+                    end_col = min(end_col, col - 1)
+                    break
+                low = _norm(text)
+                if low in {"reliability", "severity"} and col > sev_col + 5:
+                    end_col = min(end_col, col - 1)
+                    break
+                if col <= sev_col + 5:
                     end_col = max(end_col, col)
 
-        if sev_col is not None:
-            end_col = max(end_col, sev_col + 5, _merged_max_col(ws, row, sev_col))
-        elif rel_col is not None:
-            end_col = max(end_col, rel_col + 5, start_col + 12)
-
-        end_col = max(end_col, start_col + 12)
+        end_col = min(end_col, sev_col + 6)
+        end_col = max(end_col, sev_col + 5)
 
         print(
             f">>> ISR Regions header row {row}: "
             f"RELIABILITY={'col' + str(rel_col) if rel_col else 'n/a'}, "
-            f"SEVERITY={'col' + str(sev_col) if sev_col else 'n/a'} "
-            f"→ cols {start_col}-{end_col}"
+            f"SEVERITY=col{sev_col} → cols {start_col}-{end_col} "
+            f"(two sections only; monthly grids excluded)"
         )
         return row, start_col, end_col
     return None
 
 
 def _discover_isr_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, int, int, int]:
-    """Locate the Regions RELIABILITY + SEVERITY table."""
+    """Locate ONLY the Regions RELIABILITY + SEVERITY table (two sections)."""
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
     try:
         match = _find_sheet_name(list(wb.sheetnames), sheet_name) or sheet_name
@@ -220,17 +222,14 @@ def _discover_isr_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, in
         if end_row < start_row + header_rows:
             end_row = min(max_scan, start_row + header_rows + 12)
 
-        for row in range(start_row, end_row + 1):
-            for col in range(end_col + 1, end_col + 8):
-                if _cell_str(ws, row, col):
-                    end_col = col
-
+        # Do not extend into monthly chart-source grids.
         addr = _range_address(start_row, end_row, start_col, end_col)
         logger.info("ISR Regions table %s!%s", match, addr)
         print(
             f">>> ISR table range: {match}!{addr} "
-            f"(Regions / RELIABILITY / SEVERITY"
-            f"{', through SYSTEM' if saw_system else ''})"
+            f"(Regions / RELIABILITY / SEVERITY only"
+            f"{', through SYSTEM' if saw_system else ''}; "
+            f"monthly Actual/Goal grids not included)"
         )
         return start_row, end_row, start_col, end_col
     finally:
@@ -400,7 +399,7 @@ def apply_isr_workings_panels(slide, data, element: dict) -> bool:
     """Fill ISR Motorized from Workings!ISR Regions Rel/Sev table + graphs."""
     workbook = element.get("workbook", "workings")
     prefer_com = bool(element.get("prefer_excel_com", True))
-    # Table fills the upper slot; graphs fill the enlarged bottom boxes.
+    # Table fills the template OLE-style slot; graphs keep template chart sizes.
     fit = str(element.get("fit", "fill")).lower()
     chart_fit = str(element.get("chart_fit", "fill")).lower()
 

@@ -1137,21 +1137,22 @@ def _verify_output(prs: Presentation) -> None:
         for s in isr.shapes
         if s.shape_type == MSO_SHAPE_TYPE.PICTURE and int(s.top) < 6_200_000
     ]
-    isr_table_pics = [s for s in isr_pics if int(s.top) < 3_200_000]
-    isr_chart_pics = [s for s in isr_pics if int(s.top) >= 3_200_000]
+    isr_table_pics = [s for s in isr_pics if int(s.top) < 4_000_000]
+    isr_chart_pics = [s for s in isr_pics if int(s.top) >= 4_000_000]
     print(
         f"VERIFY slide 12 ISR: {len(isr_table_pics)} table pic(s), "
         f"{len(isr_chart_pics)} graph screenshot(s), {isr_charts} native chart(s)"
     )
     if isr_chart_pics:
-        tall = sum(1 for s in isr_chart_pics if int(s.height) >= 2_400_000)
-        if tall < 2:
+        # Template-sized charts (~1.79M EMU tall), not the oversized slots.
+        ok_size = sum(1 for s in isr_chart_pics if 1_500_000 <= int(s.height) <= 2_100_000)
+        if ok_size < 2:
             logger.warning(
-                "Slide 12 ISR graphs may be too small (expected taller boxes); heights=%s",
+                "Slide 12 ISR graph sizes off template (heights=%s)",
                 [int(s.height) for s in isr_chart_pics],
             )
         else:
-            print("VERIFY slide 12 ISR: Reliability/Severity graphs use enlarged slots")
+            print("VERIFY slide 12 ISR: Reliability/Severity graphs match template sizing")
     if len(isr_table_pics) < 1:
         logger.warning(
             "Slide 12 ISR expected Workings Regions RELIABILITY/SEVERITY table screenshot, found none"
