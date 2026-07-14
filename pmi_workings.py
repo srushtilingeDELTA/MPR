@@ -93,10 +93,24 @@ def _merged_max_col(ws, row: int, col: int) -> int:
     return col
 
 
-def _find_regions_pmi_header(ws, *, max_row: int = 40, max_col: int = 40) -> tuple[int, int, int] | None:
-    """Find Regions + MOTORIZED / STATIONARY PMI (+ NON-MOTORIZED PMI) header row.
+def _is_month_header(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+    months = {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec", "ytd",
+    }
+    if t in months:
+        return True
+    return t[:3] in months and len(t) <= 9
 
-    Returns (header_row, start_col, end_col).
+
+def _find_regions_pmi_header(ws, *, max_row: int = 40, max_col: int = 40) -> tuple[int, int, int] | None:
+    """Find Regions + MOTORIZED / STATIONARY PMI + NON-MOTORIZED PMI header row.
+
+    Returns (header_row, start_col, end_col) for that table only — never the
+    monthly Actual/Goal chart-source grids that sit to the right.
     """
     scan_cols = min(max(int(ws.max_column or max_col), 20), max_col)
     for row in range(1, min(int(ws.max_row or max_row), max_row) + 1):
@@ -104,7 +118,6 @@ def _find_regions_pmi_header(ws, *, max_row: int = 40, max_col: int = 40) -> tup
         if "region" not in blob:
             continue
 
-        # Require the exact Mot/Stat + Non-Motorized Regions dashboard (image 1).
         has_mot = "motorized" in blob or "stationary" in blob
         has_nme = "non-motor" in blob or "non motor" in blob or "nme" in blob
         next_blob = _row_blob(ws, row + 1, scan_cols)
@@ -115,53 +128,60 @@ def _find_regions_pmi_header(ws, *, max_row: int = 40, max_col: int = 40) -> tup
         start_col = None
         mot_col = None
         nme_col = None
-        end_col = 1
         for col in range(1, scan_cols + 1):
             text = _norm(_cell_str(ws, row, col))
             if not text:
                 continue
             if start_col is None and "region" in text:
                 start_col = col
-            if "motorized" in text or "stationary" in text:
-                if "non-" not in text and "non " not in text:
-                    mot_col = col if mot_col is None else min(mot_col, col)
-                    end_col = max(end_col, _merged_max_col(ws, row, col))
+            if ("motorized" in text or "stationary" in text) and "non-" not in text and "non " not in text:
+                mot_col = col if mot_col is None else min(mot_col, col)
             if "non-motor" in text or "non motor" in text or text == "nme":
                 nme_col = col if nme_col is None else min(nme_col, col)
-                end_col = max(end_col, _merged_max_col(ws, row, col))
-            end_col = max(end_col, col)
 
-        if start_col is None:
+        if start_col is None or nme_col is None:
             continue
 
-        # Expand across MTD/YTD/Score sub-header columns under both blocks.
+        # Non-Motorized metric block is ~6 cols (Actual..YTD Score).
+        end_col = max(
+            _merged_max_col(ws, row, nme_col),
+            nme_col + 5,
+        )
+
+        # Expand only through MTD/YTD/Score sub-headers under the two PMI blocks.
+        # Stop before monthly JAN..DEC / Actual/Goal chart-source grids.
         for r in (row, row + 1, row + 2):
-            for col in range(start_col, scan_cols + 1):
-                if _cell_str(ws, r, col):
+            for col in range(start_col, min(scan_cols, end_col + 2) + 1):
+                text = _cell_str(ws, r, col)
+                if not text:
+                    continue
+                if _is_month_header(text):
+                    end_col = min(end_col, col - 1)
+                    break
+                # A lone "Motorized"/"Stationary" + Actual/Goal grid (chart source).
+                low = _norm(text)
+                if low in {"motorized", "stationary"} and col > nme_col + 5:
+                    end_col = min(end_col, col - 1)
+                    break
+                if col <= nme_col + 5:
                     end_col = max(end_col, col)
 
-        # If NON-MOTORIZED title exists, ensure a full metric block after it (~6 cols).
-        if nme_col is not None:
-            end_col = max(end_col, nme_col + 5, _merged_max_col(ws, row, nme_col))
-        elif mot_col is not None:
-            # Mot/Stat block alone is typically 6 metric cols after Regions.
-            end_col = max(end_col, start_col + 6)
-
-        # Full Mot/Stat + Non-Motorized layout is ~14 cols (A–N).
-        end_col = max(end_col, start_col + 12)
+        # Hard cap: never past Non-Motorized block + one spacer.
+        end_col = min(end_col, nme_col + 6)
+        end_col = max(end_col, nme_col + 5)
 
         print(
             f">>> PMI Regions header row {row}: "
             f"MOTORIZED/STATIONARY={'col' + str(mot_col) if mot_col else 'n/a'}, "
-            f"NON-MOTORIZED={'col' + str(nme_col) if nme_col else 'n/a'} "
-            f"→ cols {start_col}-{end_col}"
+            f"NON-MOTORIZED=col{nme_col} → cols {start_col}-{end_col} "
+            f"(monthly Actual/Goal grids excluded)"
         )
         return row, start_col, end_col
     return None
 
 
 def _discover_pmi_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, int, int, int]:
-    """Locate the Regions MOTORIZED/STATIONARY + NON-MOTORIZED PMI table."""
+    """Locate ONLY the Regions MOTORIZED/STATIONARY + NON-MOTORIZED PMI table."""
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
     try:
         match = _find_sheet_name(list(wb.sheetnames), sheet_name) or sheet_name
@@ -169,12 +189,11 @@ def _discover_pmi_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, in
         hdr = _find_regions_pmi_header(ws)
         if hdr is None:
             raise ValueError(
-                f"Could not find Regions MOTORIZED/STATIONARY (+ NON-MOTORIZED) PMI table on {sheet_name!r}"
+                f"Could not find Regions MOTORIZED/STATIONARY + NON-MOTORIZED PMI table on {sheet_name!r}"
             )
 
         start_row, start_col, end_col = hdr
 
-        # Include MTD/YTD/Score and Actual/B/W Goal sub-header rows.
         header_rows = 1
         for extra in (1, 2):
             blob = _row_blob(ws, start_row + extra, end_col)
@@ -200,7 +219,6 @@ def _discover_pmi_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, in
             if any(token in label for token in _STOP_LABELS) or any(
                 token in _row_blob(ws, row, end_col) for token in ("weight", "total score")
             ):
-                # Hit the monthly WEIGHT/KPI dump or other content below the regions table.
                 break
 
             end_row = row
@@ -211,18 +229,14 @@ def _discover_pmi_table(workbook_bytes: bytes, sheet_name: str) -> tuple[int, in
         if end_row < start_row + header_rows:
             end_row = min(max_scan, start_row + header_rows + 16)
 
-        # Extend end_col if trailing Non-Motorized cells exist on data rows.
-        for row in range(start_row, end_row + 1):
-            for col in range(end_col + 1, end_col + 8):
-                if _cell_str(ws, row, col):
-                    end_col = col
-
+        # Do NOT extend right into monthly chart-source grids.
         addr = _range_address(start_row, end_row, start_col, end_col)
         logger.info("PMI Regions table %s!%s", match, addr)
         print(
             f">>> PMI table range: {match}!{addr} "
-            f"(Regions / MOTORIZED-STATIONARY PMI / NON-MOTORIZED PMI"
-            f"{', through SYSTEM' if saw_system else ''})"
+            f"(Regions / MOTORIZED-STATIONARY / NON-MOTORIZED only"
+            f"{', through SYSTEM' if saw_system else ''}; "
+            f"monthly Actual/Goal grids not included)"
         )
         return start_row, end_row, start_col, end_col
     finally:
@@ -502,7 +516,7 @@ def apply_pmi_workings_panels(slide, data, element: dict) -> bool:
             top=top,
             max_width=width,
             max_height=height,
-            fit=fit,
+            fit=chart_fit,
         )
         placed += 1
         try:

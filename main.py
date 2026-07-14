@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.14-isr-bigger-graphs"
+SCRIPT_VERSION = "2026.07.14-pmi-regions-table-only"
 
 import logging
 from pathlib import Path
