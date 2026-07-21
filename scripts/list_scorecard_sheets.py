@@ -21,7 +21,7 @@ SUGGESTED = [
     (7, "workings FINANCE Regions/BUDGET/OVERTIME/TOTAL HOURS screenshot"),
     (10, "workings PMI Regions Mot/Stat+Non-Mot table + Mot/Stat graphs"),
     (11, "workings ISR Regions Rel/Sev table + Rel/Sev graphs"),
-    (13, "North summary"),
+    (13, "North summary from Visualizations!Scorecard Summaries (main + 2 legends)"),
     (14, "North comparison"),
     (15, "South summary"),
     (16, "South comparison"),
@@ -41,7 +41,7 @@ def main() -> int:
         print(exc)
         return 1
 
-    for key in ("scorecards", "workings", "actuals"):
+    for key in ("scorecards", "workings", "actuals", "visualizations"):
         names = store.sheet_names(key)
         print(f"\n{key} ({len(names)} sheets):")
         if not names:

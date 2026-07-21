@@ -179,16 +179,16 @@ slides:
     elements:
       - type: clear_narrative
 
-  # PPT 14-19 — Entity scorecards (live sheets in 2026 - GSE Scorecards.xlsx)
+  # PPT 14 — North Scorecard Summary from GSE MPR Visualizations.xlsx
+  # Scorecard Summaries tab: main scorecard (GSE MPR / SAFETY / CX / OPS /
+  # FINANCE / PEOPLE / TOTAL + KPI rows) + two legend tables.
   - index: 13
     name: north_scorecard_summary
     keep_title: true
     elements:
-      - type: scorecard_screenshot
-        workbook: scorecards
-        sheet_match: ["Motorized"]
-        sheet_index: 1
-        sections: sheet
+      - type: north_summary_panels
+        workbook: visualizations
+        sheet_match: ["scorecard summar"]
         replace_existing_pictures: true
         fit: fill
         optional: true

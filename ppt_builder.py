@@ -756,6 +756,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_isr_workings_panels(slide, data, element) and not optional:
             logger.warning("No Workings ISR panels for element %s", element)
+    elif etype == "north_summary_panels":
+        from north_summary import apply_north_summary_panels
+
+        if not apply_north_summary_panels(slide, data, element) and not optional:
+            logger.warning("No North summary panels for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
@@ -1237,6 +1242,21 @@ def _verify_output(prs: Presentation) -> None:
         logger.warning("Slide 13 ISR comments narrative still has text: %s", isr_c_leftover[:2])
     else:
         print("VERIFY slide 13 ISR comments: Leading Issues / Action Plan boxes are empty")
+
+    # Slide 14 North Scorecard Summary: main scorecard + up to 2 legend screenshots.
+    north = prs.slides[13]
+    north_pics = [s for s in north.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    print(f"VERIFY slide 14 North summary pictures: {len(north_pics)} (expect main + 2 legends when Visualizations is present)")
+    if len(north_pics) == 0:
+        print(
+            "VERIFY slide 14 North summary: no pictures "
+            "(Visualizations workbook optional / missing on this run)"
+        )
+    elif len(north_pics) < 3:
+        logger.warning(
+            "Slide 14 North summary expected main + 2 legends, found %s picture(s)",
+            len(north_pics),
+        )
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:

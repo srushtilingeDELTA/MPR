@@ -71,9 +71,9 @@ python main.py
 | 8–9 | Finance comments: Leading Issues / Action Plan text boxes emptied (boxes kept for manual entry) |
 | 10 | PMI: Regions MOTORIZED/STATIONARY + NON-MOTORIZED table + Mot/Stat graphs from Workings `PMI`; narrative emptied |
 | 11 | ISR: Regions RELIABILITY + SEVERITY table + Rel/Sev graphs from Workings `ISR`; narrative emptied |
-| 12 | ISR comments: Leading Issues / Action Plan text boxes emptied (boxes kept) |
-| 11 | ISR Reliability / Severity charts |
-| 13–18 | North / South / Stationary scorecard sheet screenshots |
+| 13 | ISR comments: Leading Issues / Action Plan text boxes emptied (boxes kept) |
+| 14 | North Scorecard Summary: screenshots from `GSE MPR Visualizations.xlsx` → Scorecard Summaries (main scorecard + 2 legend tables) |
+| 15–18 | North comparison / South / Stationary scorecard sheet screenshots |
 | 19 | Jam Rate / Clear Times charts |
 | 21 | VOS chart |
 | 23–24 | Galley scorecard sheet screenshots |
@@ -97,6 +97,7 @@ MPR/
 ├── ppt_builder.py
 ├── ppt_format.py
 ├── scorecard_screenshots.py
+├── north_summary.py
 ├── sharepoint_live.py
 ├── sharepoint_selenium.py
 ├── workbook_store.py

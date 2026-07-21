@@ -16,6 +16,10 @@ workbooks:
     path: "data/2026 - GSE Scorecards.xlsx"
     header_row: 0
     optional: true
+  visualizations:
+    path: "data/GSE MPR Visualizations.xlsx"
+    header_row: 0
+    optional: true
 
 sharepoint:
   site_url: "https://deltaairlines.sharepoint.com/sites/DL002488"
@@ -46,6 +50,11 @@ sharepoint:
     - name: "New GSE MPR Workings.xlsx"
       dest: "data/New GSE MPR Workings.xlsx"
       optional: true
+    - name: "GSE MPR Visualizations.xlsx"
+      dest: "data/GSE MPR Visualizations.xlsx"
+      optional: true
+      # If the exact name differs, sync will also match folder files containing this.
+      match_contains: "Visualizations"
 
 columns:
   kpi: "KPI"

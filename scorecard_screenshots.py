@@ -1332,13 +1332,34 @@ def _create_excel_application(*, visible: bool = True):
 
 def _open_excel_workbook(workbook_path: Path):
     """Open Excel visible (required for non-blank CopyPicture) and return (excel, wb)."""
-    excel = _create_excel_application(visible=True)
-    wb = excel.Workbooks.Open(
-        str(workbook_path.resolve()),
-        ReadOnly=True,
-        UpdateLinks=0,
-    )
-    return excel, wb
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        excel = None
+        try:
+            excel = _create_excel_application(visible=True)
+            wb = excel.Workbooks.Open(
+                str(workbook_path.resolve()),
+                ReadOnly=True,
+                UpdateLinks=0,
+            )
+            if attempt > 0:
+                print(">>> Excel COM reopen succeeded after cache clear")
+            return excel, wb
+        except Exception as exc:
+            last_exc = exc
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+            if attempt == 0 and "CLSIDToPackageMap" in str(exc):
+                logger.warning("Excel open hit corrupt COM cache; clearing and retrying")
+                print(">>> Excel COM cache corrupt on open — clearing gen_py and retrying...")
+                _clear_broken_win32com_cache()
+                continue
+            raise
+    raise RuntimeError(f"Could not open Excel workbook: {last_exc}")
+
 
 
 

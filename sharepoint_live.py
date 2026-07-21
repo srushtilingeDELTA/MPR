@@ -38,6 +38,7 @@ class SharePointFileSpec:
     name: str
     dest: str
     optional: bool = False
+    match_contains: str | None = None
 
 
 @dataclass
@@ -290,6 +291,11 @@ def default_file_specs(config: dict, base_dir: Path) -> list[SharePointFileSpec]
                         name=name,
                         dest=dest,
                         optional=bool(entry.get("optional", False)),
+                        match_contains=(
+                            str(entry["match_contains"]).strip()
+                            if entry.get("match_contains")
+                            else None
+                        ),
                     )
                 )
         return specs
@@ -461,6 +467,42 @@ def sync_sharepoint_files(config: dict, base_dir: Path | None = None) -> SharePo
             else:
                 logger.info("Loaded %s into memory (%s bytes)", spec.name, len(data))
         except Exception as exc:
+            # Optional fuzzy match when exact filename is missing (e.g. Visualizations).
+            recovered = False
+            if spec.optional and spec.match_contains:
+                try:
+                    listed = list_folder_files(session, site_url, folder_path)
+                    needle = spec.match_contains.casefold()
+                    hits = [
+                        row.get("name")
+                        for row in listed
+                        if row.get("name") and needle in str(row["name"]).casefold()
+                    ]
+                    hits = [h for h in hits if str(h).lower().endswith((".xlsx", ".xlsm", ".xls"))]
+                    if hits:
+                        alt_name = hits[0]
+                        alt_path = server_path_for_file(sp_cfg, alt_name)
+                        data = download_file_bytes(session, site_url, alt_path)
+                        result.files[spec.dest] = data
+                        _SHAREPOINT_CACHE[spec.dest] = data
+                        logger.info(
+                            "Loaded %s via match_contains=%r as %s (%s bytes)",
+                            alt_name,
+                            spec.match_contains,
+                            spec.dest,
+                            len(data),
+                        )
+                        if sp_cfg.get("cache_to_disk"):
+                            out = base_dir / spec.dest
+                            out.parent.mkdir(parents=True, exist_ok=True)
+                            out.write_bytes(data)
+                        recovered = True
+                except Exception as match_exc:
+                    logger.debug("match_contains recovery failed for %s: %s", spec.name, match_exc)
+
+            if recovered:
+                continue
+
             msg = str(exc)
             result.errors[spec.name] = msg
             if spec.optional:
