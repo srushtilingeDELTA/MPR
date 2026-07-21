@@ -635,9 +635,7 @@ def _total_score_rows_via_excel_com(
         with tempfile.TemporaryDirectory(prefix="mpr_scorecard_detect_") as tmp:
             path = Path(tmp) / "scorecards.xlsx"
             path.write_bytes(workbook_bytes)
-            excel = win32com.client.DispatchEx("Excel.Application")
-            excel.Visible = False
-            excel.DisplayAlerts = False
+            excel = _create_excel_application(visible=False)
             wb = excel.Workbooks.Open(str(path), ReadOnly=True, UpdateLinks=0)
             sheet = None
             for candidate in wb.Worksheets:
@@ -1237,31 +1235,111 @@ def _copy_picture_to_png(rng, *, appearance: int, fmt: int) -> bytes | None:
     return None
 
 
-def _open_excel_workbook(workbook_path: Path):
-    """Open Excel visible (required for non-blank CopyPicture) and return (excel, wb)."""
+def _clear_broken_win32com_cache() -> None:
+    """Remove corrupted pywin32 gen_py cache (fixes CLSIDToPackageMap errors)."""
+    try:
+        import win32com  # type: ignore
+
+        gen_path = Path(getattr(win32com, "__gen_path__", "") or "")
+        if gen_path.is_dir():
+            import shutil
+
+            shutil.rmtree(gen_path, ignore_errors=True)
+            logger.warning("Cleared broken win32com gen_py cache at %s", gen_path)
+            print(f">>> Cleared broken Excel COM cache: {gen_path}")
+    except Exception as exc:
+        logger.warning("Could not clear win32com cache: %s", exc)
+
+    # Drop cached modules so the next Dispatch rebuilds cleanly.
+    try:
+        import sys
+
+        doomed = [name for name in list(sys.modules) if name.startswith("win32com.gen_py")]
+        for name in doomed:
+            sys.modules.pop(name, None)
+    except Exception:
+        pass
+
+
+def _create_excel_application(*, visible: bool = True):
+    """Create Excel.Application via late-bound COM (avoids broken gencache).
+
+    The classic failure mode is:
+      module 'win32com.gen_py....' has no attribute 'CLSIDToPackageMap'
+    which makes EnsureDispatch unusable and forces Pillow fallbacks. Prefer
+    DispatchEx / dynamic.Dispatch, and rebuild the cache if needed.
+    """
     import win32com.client  # type: ignore
 
     try:
-        excel = win32com.client.gencache.EnsureDispatch("Excel.Application")
+        import pythoncom
+
+        pythoncom.CoInitialize()
     except Exception:
+        pass
+
+    errors: list[str] = []
+
+    def _configure(excel):
+        excel.Visible = bool(visible)
+        excel.DisplayAlerts = False
+        excel.ScreenUpdating = True
+        try:
+            excel.AskToUpdateLinks = False
+        except Exception:
+            pass
+        if visible:
+            try:
+                # Normal window — maximized+window-grab looks like Excel UI.
+                excel.WindowState = -4143  # xlNormal
+            except Exception:
+                pass
+            try:
+                excel.Width = 1400
+                excel.Height = 900
+            except Exception:
+                pass
+        return excel
+
+    # 1) Late-bound DispatchEx — does not depend on gen_py early binding.
+    for factory_name, factory in (
+        ("DispatchEx", win32com.client.DispatchEx),
+        ("dynamic.Dispatch", win32com.client.dynamic.Dispatch),
+        ("Dispatch", win32com.client.Dispatch),
+    ):
+        try:
+            excel = factory("Excel.Application")
+            return _configure(excel)
+        except Exception as exc:
+            errors.append(f"{factory_name}:{exc}")
+            if "CLSIDToPackageMap" in str(exc):
+                _clear_broken_win32com_cache()
+
+    # 2) Last resort: wipe cache and try DispatchEx once more.
+    _clear_broken_win32com_cache()
+    try:
         excel = win32com.client.DispatchEx("Excel.Application")
+        return _configure(excel)
+    except Exception as exc:
+        errors.append(f"retry DispatchEx:{exc}")
+        raise RuntimeError(
+            "Could not start Excel via win32com. "
+            "Try: pip install --force-reinstall pywin32 && "
+            r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\Temp\gen_py "
+            f"(errors: {'; '.join(errors)})"
+        ) from exc
 
-    excel.Visible = True
-    excel.DisplayAlerts = False
-    excel.ScreenUpdating = True
-    try:
-        # Normal window — maximized+window-grab looks like Excel UI, not a scorecard paste.
-        excel.WindowState = -4143  # xlNormal
-    except Exception:
-        pass
-    try:
-        excel.Width = 1400
-        excel.Height = 900
-    except Exception:
-        pass
 
-    wb = excel.Workbooks.Open(str(workbook_path.resolve()), ReadOnly=True, UpdateLinks=0)
+def _open_excel_workbook(workbook_path: Path):
+    """Open Excel visible (required for non-blank CopyPicture) and return (excel, wb)."""
+    excel = _create_excel_application(visible=True)
+    wb = excel.Workbooks.Open(
+        str(workbook_path.resolve()),
+        ReadOnly=True,
+        UpdateLinks=0,
+    )
     return excel, wb
+
 
 
 def _prepare_sheet_for_copy(excel, ws, range_addr: str):
@@ -1363,24 +1441,35 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
             "Then re-run main.py for template-quality System scorecard screenshots."
         ) from exc
 
-    excel = None
-    wb = None
-    try:
-        excel, wb = _open_excel_workbook(workbook_path)
-        ws = _find_com_worksheet(wb, sheet_name)
-        rng = _prepare_sheet_for_copy(excel, ws, range_addr)
-        return _copy_range_picture(rng)
-    finally:
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        excel = None
+        wb = None
         try:
-            if wb is not None:
-                wb.Close(SaveChanges=False)
-        except Exception:
-            pass
-        try:
-            if excel is not None:
-                excel.Quit()
-        except Exception:
-            pass
+            excel, wb = _open_excel_workbook(workbook_path)
+            ws = _find_com_worksheet(wb, sheet_name)
+            rng = _prepare_sheet_for_copy(excel, ws, range_addr)
+            return _copy_range_picture(rng)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0 and "CLSIDToPackageMap" in str(exc):
+                logger.warning("Excel COM cache corrupt; clearing and retrying once")
+                print(">>> Excel COM cache corrupt — clearing gen_py and retrying...")
+                _clear_broken_win32com_cache()
+                continue
+            raise
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+    raise RuntimeError(f"Excel COM capture failed: {last_exc}")
 
 
 def _capture_system_sections_via_com(
@@ -1597,11 +1686,43 @@ def capture_range_png(
                     )
                 return png
         except Exception as exc:
-            logger.warning(
-                "Excel COM capture unavailable or blank (%s). "
-                "Using Pillow cell render fallback so the slide is not empty.",
-                exc,
-            )
+            msg = str(exc)
+            if "CLSIDToPackageMap" in msg:
+                logger.warning(
+                    "Excel COM cache corrupt (%s); clearing gen_py and retrying once",
+                    exc,
+                )
+                print(">>> Excel COM cache corrupt — clearing gen_py and retrying...")
+                _clear_broken_win32com_cache()
+                try:
+                    with tempfile.TemporaryDirectory(prefix="mpr_scorecard_") as tmp:
+                        path = Path(tmp) / "scorecards.xlsx"
+                        path.write_bytes(workbook_bytes)
+                        png = _capture_via_excel_com(path, sheet_name, range_addr)
+                        png = _validate_capture(
+                            png, label=f"Excel COM retry {sheet_name}!{range_addr}"
+                        )
+                        with Image.open(io.BytesIO(png)) as img:
+                            logger.info(
+                                "Captured %s!%s via Excel COM retry (%s bytes, %sx%s)",
+                                sheet_name,
+                                range_addr,
+                                len(png),
+                                img.width,
+                                img.height,
+                            )
+                        return png
+                except Exception as retry_exc:
+                    logger.warning(
+                        "Excel COM retry also failed (%s). Using Pillow fallback.",
+                        retry_exc,
+                    )
+            else:
+                logger.warning(
+                    "Excel COM capture unavailable or blank (%s). "
+                    "Using Pillow cell render fallback so the slide is not empty.",
+                    exc,
+                )
 
     png = _capture_via_render(workbook_bytes, sheet_name, start_row, end_row, start_col, end_col)
     with Image.open(io.BytesIO(png)) as img:

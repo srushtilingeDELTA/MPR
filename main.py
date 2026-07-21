@@ -5,7 +5,7 @@ Excel (SharePoint) -> PowerPoint template -> upload to SharePoint
 
 from __future__ import annotations
 
-SCRIPT_VERSION = "2026.07.14-isr-graphs-bigger"
+SCRIPT_VERSION = "2026.07.21-fix-excel-com-cache"
 
 import logging
 from pathlib import Path
