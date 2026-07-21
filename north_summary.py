@@ -2,8 +2,8 @@
 
 Screenshots the Scorecard Summaries tab:
   - Main scorecard block (GSE MPR + SAFETY / CX / OPS / FINANCE / PEOPLE / TOTAL
-    and the listed KPI rows)
-  - Two legend tables
+    and the listed KPI rows, including QC / Budget / OT / Hours / Lead Input)
+  - Two full legend tables (not just the "Legend" header word)
 
 Placement prefers the template's existing picture slots (largest = main,
 remaining two = legends). Falls back to measured EMU boxes from the live deck
@@ -24,6 +24,7 @@ from PIL import Image
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from scorecard_screenshots import (
+    _fill_rgb,
     _find_sheet_name,
     _range_address,
     _remove_slide_pictures,
@@ -40,7 +41,6 @@ logger = logging.getLogger(__name__)
 NORTH_MAIN_BOX = (2_208_251, 1_009_877, 7_775_497, 4_838_246)
 
 # Fallback legend slots when the template no longer has the two smaller pictures.
-# Sit in the left margin beside the main scorecard (same vertical band).
 NORTH_LEGEND_BOXES = (
     (314_628, 1_009_877, 1_750_000, 2_200_000),
     (314_628, 3_350_000, 1_750_000, 2_200_000),
@@ -56,19 +56,45 @@ CATEGORY_HEADERS = (
     "total",
 )
 
-KPI_LABELS = (
+KPI_KEYS = (
     "global injury rate",
     "ea compliance",
     "asap",
     "isr%",
-    "isr %",
     "sev",
-    "pmi nme",
     "pmi",
+    "pmi nme",
     "qc compliance",
     "budget $000s",
-    "budget $000",
-    "budget",
+    "overtime",
+    "total hours",
+    "lead input",
+)
+
+KPI_ALIASES: dict[str, tuple[str, ...]] = {
+    "global injury rate": ("global injury rate", "gir", "injury rate"),
+    "ea compliance": ("ea compliance", "eac", "ea comp"),
+    "asap": ("asap",),
+    "isr%": ("isr%", "isr %", "isr"),
+    "sev": ("sev", "severity"),
+    "pmi": ("pmi", "pm (m)", "pm motorized"),
+    "pmi nme": ("pmi nme", "pm (nme)", "pm nme", "non-motorized", "non motorized"),
+    "qc compliance": ("qc compliance", "qc comp", "qcc"),
+    "budget $000s": (
+        "budget $000s",
+        "budget $000",
+        "budget ($000s)",
+        "budget ($000)",
+        "budget",
+    ),
+    "overtime": ("overtime", "ot", "o.t."),
+    "total hours": ("total hours", "hours", "total hrs", "tot hours"),
+    "lead input": ("lead input", "lead inputs", "leadership input"),
+}
+
+REQUIRED_BOTTOM_KPIS = (
+    "qc compliance",
+    "budget $000s",
     "overtime",
     "total hours",
     "lead input",
@@ -81,6 +107,12 @@ LEGEND_TOKENS = (
     "score key",
     "key:",
 )
+
+# Minimum footprint so we never paste only the word "Legend".
+LEGEND_MIN_EXTRA_ROWS = 3
+LEGEND_MIN_EXTRA_COLS = 2
+LEGEND_MAX_ROWS = 12
+LEGEND_MAX_COLS = 6
 
 
 @dataclass
@@ -97,6 +129,14 @@ class RangeBlock:
     def range_address(self) -> str:
         return _range_address(self.start_row, self.end_row, self.start_col, self.end_col)
 
+    @property
+    def row_count(self) -> int:
+        return self.end_row - self.start_row + 1
+
+    @property
+    def col_count(self) -> int:
+        return self.end_col - self.start_col + 1
+
 
 @dataclass
 class NorthSummaryLayout:
@@ -112,11 +152,92 @@ def _cell_str(ws, row: int, col: int) -> str:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").casefold()).strip()
+    cleaned = (
+        str(text or "")
+        .replace("\xa0", " ")
+        .replace("\u2007", " ")
+        .replace("\u202f", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("\t", " ")
+    )
+    cleaned = re.sub(r"[()]", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).casefold().strip()
+
+
+def _cell_has_fill(ws, row: int, col: int) -> bool:
+    try:
+        rgb = _fill_rgb(ws.cell(row, col))
+    except Exception:
+        return False
+    if rgb is None:
+        return False
+    return not (rgb[0] >= 245 and rgb[1] >= 245 and rgb[2] >= 245)
+
+
+def _cell_interesting(ws, row: int, col: int) -> bool:
+    """True when a cell has text or a non-white fill (legend color swatches)."""
+    return bool(_cell_str(ws, row, col)) or _cell_has_fill(ws, row, col)
+
+
+def _match_category(text: str, token: str) -> bool:
+    n = _norm(text)
+    if not n:
+        return False
+    if token == "total":
+        return n == "total" or (n.startswith("total ") and "hour" not in n)
+    if token == "safety":
+        return n == "safety" or n.startswith("safety")
+    return token == n or token in n or n in token
+
+
+def _match_kpi(text: str, key: str) -> bool:
+    n = _norm(text)
+    if not n:
+        return False
+    for alias in KPI_ALIASES.get(key, (key,)):
+        a = _norm(alias)
+        if not a:
+            continue
+        # Short aliases (ot, sev, qc) must be whole-token matches.
+        if len(a) <= 3:
+            tokens = set(re.findall(r"[a-z0-9%]+", n))
+            if a not in tokens and n != a:
+                continue
+        else:
+            hit = n == a or a in n or a.replace(" ", "") in n.replace(" ", "")
+            if not hit:
+                continue
+        if key == "pmi" and "nme" in n:
+            continue
+        if key == "lead input" and "leading" in n:
+            continue
+        if key == "isr%" and n in {"severity", "sev"}:
+            continue
+        if key == "overtime" and "total" in n and "overtime" not in n and "ot" not in n.split():
+            continue
+        return True
+    return False
+
+
+def _find_label_cells(ws, min_row: int, max_row: int, min_col: int, max_col: int) -> dict[str, tuple[int, int]]:
+    """Map canonical label key -> first (row, col) hit."""
+    found: dict[str, tuple[int, int]] = {}
+    for row in range(min_row, max_row + 1):
+        for col in range(min_col, max_col + 1):
+            text = _cell_str(ws, row, col)
+            if not text:
+                continue
+            for token in CATEGORY_HEADERS:
+                if token not in found and _match_category(text, token):
+                    found[token] = (row, col)
+            for key in KPI_KEYS:
+                if key not in found and _match_kpi(text, key):
+                    found[key] = (row, col)
+    return found
 
 
 def _picture_boxes(slide) -> list[tuple[int, int, int, int]]:
-    """Return picture (left, top, width, height) sorted by area descending."""
     boxes: list[tuple[int, int, int, int]] = []
     for shape in slide.shapes:
         if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
@@ -130,7 +251,6 @@ def _resolve_placement_boxes(
     slide,
     element: dict,
 ) -> tuple[tuple[int, int, int, int], list[tuple[int, int, int, int]]]:
-    """Main + legend placement boxes from element overrides, template pics, or defaults."""
     if element.get("main_box"):
         main = tuple(int(x) for x in element["main_box"])  # type: ignore[assignment]
     else:
@@ -147,7 +267,6 @@ def _resolve_placement_boxes(
     if legend_boxes is None and len(slots) >= 3:
         legend_boxes = sorted(slots[1:3], key=lambda b: (b[1], b[0]))
     elif legend_boxes is None and len(slots) == 2:
-        # Two pics only: treat smaller as first legend; second uses fallback.
         legend_boxes = [slots[1], NORTH_LEGEND_BOXES[1]]
 
     if main is None:
@@ -163,38 +282,10 @@ def _resolve_placement_boxes(
 
     if not legend_boxes:
         legend_boxes = list(NORTH_LEGEND_BOXES)
-
     return main, legend_boxes[:2]
 
 
-def _find_label_cells(ws, min_row: int, max_row: int, min_col: int, max_col: int) -> dict[str, tuple[int, int]]:
-    """Map normalized label -> first (row, col) hit for category/KPI tokens."""
-    found: dict[str, tuple[int, int]] = {}
-    tokens = list(CATEGORY_HEADERS) + list(KPI_LABELS)
-    for row in range(min_row, max_row + 1):
-        for col in range(min_col, max_col + 1):
-            text = _norm(_cell_str(ws, row, col))
-            if not text:
-                continue
-            for token in tokens:
-                if token in found:
-                    continue
-                # Prefer exact / contained matches; avoid matching "total hours" as "total".
-                if token == "total":
-                    if text == "total" or text.startswith("total ") and "hour" not in text:
-                        found[token] = (row, col)
-                elif token == "pmi":
-                    if text == "pmi" or (text.startswith("pmi") and "nme" not in text):
-                        found[token] = (row, col)
-                elif token == "budget":
-                    if "budget" in text:
-                        found[token] = (row, col)
-                elif token in text or text in token:
-                    found[token] = (row, col)
-    return found
-
-
-def _expand_block(
+def _expand_main_block(
     ws,
     seed_rows: list[int],
     seed_cols: list[int],
@@ -203,51 +294,68 @@ def _expand_block(
     max_row: int,
     min_col: int,
     max_col: int,
-    pad_rows: int = 0,
-    pad_cols: int = 1,
-    stop_rows: set[int] | None = None,
+    legend_anchors: list[tuple[int, int]],
+    required_end_row: int | None,
 ) -> tuple[int, int, int, int]:
-    """Expand seed cells to a content-filled rectangular block."""
+    """Expand to the full scorecard; never truncate below required KPI rows."""
     if not seed_rows or not seed_cols:
         return min_row, max_row, min_col, max_col
 
-    stop_rows = stop_rows or set()
-    start_row = max(min_row, min(seed_rows) - pad_rows)
-    end_row = min(max_row, max(seed_rows) + pad_rows)
-    start_col = max(min_col, min(seed_cols) - pad_cols)
-    end_col = min(max_col, max(seed_cols) + pad_cols)
+    start_row = max(min_row, min(seed_rows) - 1)
+    end_row = min(max_row, max(seed_rows))
+    start_col = max(min_col, min(seed_cols))
+    end_col = min(max_col, max(seed_cols) + 1)
 
-    # Never expand the main scorecard into legend header rows.
-    if stop_rows:
-        blockers = [r for r in stop_rows if r > start_row]
-        if blockers:
-            end_row = min(end_row, min(blockers) - 1)
+    if required_end_row is not None:
+        end_row = max(end_row, min(max_row, required_end_row))
 
-    # Grow downward while rows still have content near the block.
-    while end_row < max_row:
-        nxt = end_row + 1
-        if nxt in stop_rows:
+    # Side legends (right of the scorecard) must not be pulled into main.
+    kpi_right = max(seed_cols)
+    side_legend_cols = sorted(c for r, c in legend_anchors if c > kpi_right + 1)
+    col_cap = min(side_legend_cols) - 1 if side_legend_cols else max_col
+
+    # Only legends BELOW the required KPI block may cap the main range.
+    if required_end_row is not None:
+        below = [r for r, c in legend_anchors if r > required_end_row and c <= col_cap]
+        if below and end_row >= min(below):
+            end_row = max(required_end_row, min(below) - 1)
+
+    empty_streak = 0
+    cursor = end_row
+    while cursor < max_row and empty_streak < 3:
+        nxt = cursor + 1
+        if any(
+            r == nxt and c <= col_cap and (required_end_row is None or nxt > required_end_row)
+            for r, c in legend_anchors
+        ):
             break
-        has = any(_cell_str(ws, nxt, c) for c in range(start_col, end_col + 1))
-        if not has:
-            break
-        end_row = nxt
+        if any(_cell_interesting(ws, nxt, c) for c in range(start_col, min(end_col, col_cap) + 1)):
+            end_row = nxt
+            cursor = nxt
+            empty_streak = 0
+        else:
+            empty_streak += 1
+            cursor = nxt
 
-    # Grow right while columns still have content in the block rows.
-    while end_col < max_col:
+    if required_end_row is not None:
+        end_row = max(end_row, min(max_row, required_end_row))
+
+    while end_col < max_col and end_col < col_cap:
         nxt = end_col + 1
-        has = any(_cell_str(ws, r, nxt) for r in range(start_row, end_row + 1))
-        if not has:
-            # Allow one empty spacer column then content (common between metric groups).
-            if nxt + 1 <= max_col and any(
-                _cell_str(ws, r, nxt + 1) for r in range(start_row, end_row + 1)
-            ):
-                end_col = nxt + 1
-                continue
+        if nxt > col_cap:
             break
-        end_col = nxt
+        if any(_cell_interesting(ws, r, nxt) for r in range(start_row, end_row + 1)):
+            end_col = nxt
+            continue
+        if nxt + 1 <= col_cap and any(
+            _cell_interesting(ws, r, nxt + 1) for r in range(start_row, end_row + 1)
+        ):
+            end_col = nxt + 1
+            continue
+        break
 
-    # Include merged cells that touch the block (but stay above legend rows).
+    end_col = min(end_col, col_cap)
+
     try:
         for merged in ws.merged_cells.ranges:
             if (
@@ -256,21 +364,17 @@ def _expand_block(
                 and merged.max_col >= start_col
                 and merged.min_col <= end_col
             ):
-                if stop_rows and any(r in stop_rows for r in range(merged.min_row, merged.max_row + 1)):
-                    continue
                 start_row = min(start_row, int(merged.min_row))
                 end_row = max(end_row, int(merged.max_row))
                 start_col = min(start_col, int(merged.min_col))
-                end_col = max(end_col, int(merged.max_col))
+                end_col = min(col_cap, max(end_col, int(merged.max_col)))
     except Exception:
         pass
 
-    if stop_rows:
-        blockers = [r for r in stop_rows if r > start_row]
-        if blockers:
-            end_row = min(end_row, min(blockers) - 1)
+    if required_end_row is not None:
+        end_row = max(end_row, min(max_row, required_end_row))
 
-    return start_row, max(start_row, end_row), start_col, end_col
+    return start_row, max(start_row, end_row), start_col, max(start_col, end_col)
 
 
 def _is_legend_anchor(text: str) -> bool:
@@ -280,7 +384,7 @@ def _is_legend_anchor(text: str) -> bool:
     return any(tok in n for tok in LEGEND_TOKENS)
 
 
-def _contiguous_table_from(
+def _expand_legend_table(
     ws,
     anchor_row: int,
     anchor_col: int,
@@ -290,10 +394,9 @@ def _contiguous_table_from(
     min_col: int,
     max_col: int,
     exclude: tuple[int, int, int, int] | None = None,
+    other_legend_anchors: list[tuple[int, int]] | None = None,
 ) -> RangeBlock | None:
-    """Grow a small legend-sized table from an anchor cell."""
-    start_row, end_row = anchor_row, anchor_row
-    start_col, end_col = anchor_col, anchor_col
+    """Grow a legend from its header to the full small table (text + color fills)."""
 
     def in_exclude(r: int, c: int) -> bool:
         if exclude is None:
@@ -301,55 +404,97 @@ def _contiguous_table_from(
         er0, er1, ec0, ec1 = exclude
         return er0 <= r <= er1 and ec0 <= c <= ec1
 
-    # Expand within a modest legend footprint (avoid swallowing the main scorecard).
-    for _ in range(40):
+    others = [
+        (r, c)
+        for r, c in (other_legend_anchors or [])
+        if not (r == anchor_row and c == anchor_col)
+    ]
+
+    def hits_other_legend(r: int, c: int) -> bool:
+        return any(r == or_ and c == oc for or_, oc in others)
+
+    start_row, end_row = anchor_row, anchor_row
+    start_col, end_col = anchor_col, anchor_col
+
+    # Always include a minimum body under/beside the Legend header.
+    end_row = min(max_row, anchor_row + LEGEND_MIN_EXTRA_ROWS)
+    end_col = min(max_col, anchor_col + LEGEND_MIN_EXTRA_COLS)
+
+    # Do not let the minimum footprint cross into a neighboring Legend header.
+    for r, c in others:
+        if r == anchor_row and c > anchor_col:
+            end_col = min(end_col, c - 1)
+        if c == anchor_col and r > anchor_row:
+            end_row = min(end_row, r - 1)
+
+    for _ in range(60):
         grew = False
-        # Down
-        if end_row < max_row:
+        if end_row < max_row and (end_row - start_row + 1) < LEGEND_MAX_ROWS:
             r = end_row + 1
-            if any(
-                _cell_str(ws, r, c) and not in_exclude(r, c)
+            if any(hits_other_legend(r, c) for c in range(start_col, end_col + 1)):
+                pass
+            elif any(
+                _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for c in range(start_col, end_col + 1)
             ):
                 end_row = r
                 grew = True
-        # Right
-        if end_col < max_col and (end_col - start_col) < 12:
+        if end_col < max_col and (end_col - start_col + 1) < LEGEND_MAX_COLS:
             c = end_col + 1
-            if any(
-                _cell_str(ws, r, c) and not in_exclude(r, c)
+            if any(hits_other_legend(r, c) for r in range(start_row, end_row + 1)):
+                pass
+            elif any(
+                _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for r in range(start_row, end_row + 1)
             ):
                 end_col = c
                 grew = True
-        # Left
-        if start_col > min_col and (end_col - start_col) < 12:
+        if start_col > min_col and (end_col - start_col + 1) < LEGEND_MAX_COLS:
             c = start_col - 1
-            if any(
-                _cell_str(ws, r, c) and not in_exclude(r, c)
+            if any(hits_other_legend(r, c) for r in range(start_row, end_row + 1)):
+                pass
+            elif any(
+                _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for r in range(start_row, end_row + 1)
             ):
                 start_col = c
                 grew = True
-        # Up (short header)
-        if start_row > min_row and (end_row - start_row) < 20:
+        if start_row > min_row and (end_row - start_row + 1) < LEGEND_MAX_ROWS:
             r = start_row - 1
-            if any(
-                _cell_str(ws, r, c) and not in_exclude(r, c)
+            if any(hits_other_legend(r, c) for c in range(start_col, end_col + 1)):
+                pass
+            elif any(
+                _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for c in range(start_col, end_col + 1)
             ):
-                start_row = r
-                grew = True
+                if not (exclude is not None and in_exclude(r, start_col)):
+                    start_row = r
+                    grew = True
         if not grew:
             break
-        if (end_row - start_row) > 25:
-            break
+
+    min_end_row = min(max_row, anchor_row + LEGEND_MIN_EXTRA_ROWS)
+    min_end_col = min(max_col, anchor_col + LEGEND_MIN_EXTRA_COLS)
+    for r, c in others:
+        if r == anchor_row and c > anchor_col:
+            min_end_col = min(min_end_col, c - 1)
+        if c == anchor_col and r > anchor_row:
+            min_end_row = min(min_end_row, r - 1)
+
+    while end_row > max(anchor_row, min_end_row) and not any(
+        _cell_interesting(ws, end_row, c) for c in range(start_col, end_col + 1)
+    ):
+        end_row -= 1
+    while end_col > max(anchor_col, min_end_col) and not any(
+        _cell_interesting(ws, r, end_col) for r in range(start_row, end_row + 1)
+    ):
+        end_col -= 1
 
     if end_row < start_row or end_col < start_col:
         return None
-    # Skip if this somehow became huge (likely the main scorecard).
-    if (end_row - start_row + 1) * (end_col - start_col + 1) > 400:
+    if (end_row - start_row + 1) * (end_col - start_col + 1) > 500:
         return None
+
     return RangeBlock(
         label=f"legend@{get_column_letter(start_col)}{start_row}",
         start_row=start_row,
@@ -359,8 +504,63 @@ def _contiguous_table_from(
     )
 
 
+def _orphan_tables_outside_main(
+    ws,
+    *,
+    min_row: int,
+    max_row: int,
+    min_col: int,
+    max_col: int,
+    main: tuple[int, int, int, int],
+    already: list[RangeBlock],
+) -> list[RangeBlock]:
+    """Find small filled regions outside the main scorecard (likely legends)."""
+    mr0, mr1, mc0, mc1 = main
+    already_keys = {(b.start_row, b.end_row, b.start_col, b.end_col) for b in already}
+    candidates: list[RangeBlock] = []
+
+    search_cells: list[tuple[int, int]] = []
+    for row in range(mr1 + 1, max_row + 1):
+        for col in range(min_col, max_col + 1):
+            if _cell_interesting(ws, row, col):
+                search_cells.append((row, col))
+                break
+    for col in list(range(min_col, mc0)) + list(range(mc1 + 1, max_col + 1)):
+        for row in range(min_row, max_row + 1):
+            if _cell_interesting(ws, row, col) and not (mr0 <= row <= mr1 and mc0 <= col <= mc1):
+                search_cells.append((row, col))
+                break
+
+    for row, col in search_cells:
+        block = _expand_legend_table(
+            ws,
+            row,
+            col,
+            min_row=min_row,
+            max_row=max_row,
+            min_col=min_col,
+            max_col=max_col,
+            exclude=main,
+        )
+        if block is None:
+            continue
+        key = (block.start_row, block.end_row, block.start_col, block.end_col)
+        if key in already_keys:
+            continue
+        if block.row_count < 2 and block.col_count < 2:
+            continue
+        overlap_rows = max(0, min(block.end_row, mr1) - max(block.start_row, mr0) + 1)
+        if overlap_rows > (block.end_row - block.start_row + 1) * 0.5:
+            continue
+        already_keys.add(key)
+        candidates.append(block)
+
+    candidates.sort(key=lambda b: (b.start_row, b.start_col))
+    return candidates[: max(0, 2 - len(already))]
+
+
 def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> NorthSummaryLayout:
-    """Detect main scorecard + two legend ranges on Scorecard Summaries."""
+    """Detect main scorecard + two full legend ranges on Scorecard Summaries."""
     wb = load_workbook(io.BytesIO(workbook_bytes), data_only=False)
     match = _find_sheet_name(list(wb.sheetnames), sheet_name)
     if match is None:
@@ -369,26 +569,33 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
     ws = wb[match]
     min_row, max_row, min_col, max_col = _used_bounds(ws)
 
-    # Locate legend anchors first so the main scorecard does not swallow them.
-    legend_anchor_rows: set[int] = set()
     legend_anchors: list[tuple[int, int]] = []
     for row in range(min_row, max_row + 1):
         for col in range(min_col, max_col + 1):
             if _is_legend_anchor(_cell_str(ws, row, col)):
-                legend_anchor_rows.add(row)
                 legend_anchors.append((row, col))
 
     labels = _find_label_cells(ws, min_row, max_row, min_col, max_col)
     category_hits = [labels[t] for t in CATEGORY_HEADERS if t in labels]
-    kpi_hits = [labels[t] for t in KPI_LABELS if t in labels]
+    kpi_hits = [labels[k] for k in KPI_KEYS if k in labels]
+    bottom_hits = [labels[k] for k in REQUIRED_BOTTOM_KPIS if k in labels]
+    required_end_row = max((r for r, _ in bottom_hits), default=None)
+    if required_end_row is None and kpi_hits:
+        required_end_row = max(r for r, _ in kpi_hits)
+
+    missing_bottom = [k for k in REQUIRED_BOTTOM_KPIS if k not in labels]
+    if missing_bottom:
+        logger.warning(
+            "North summary missing KPI labels on %s: %s (found=%s)",
+            match,
+            missing_bottom,
+            sorted(k for k in labels if k in KPI_KEYS),
+        )
 
     if category_hits or kpi_hits:
-        seed_rows = [r for r, _ in category_hits + kpi_hits if r not in legend_anchor_rows]
-        seed_cols = [c for r, c in category_hits + kpi_hits if r not in legend_anchor_rows]
-        if not seed_rows:
-            seed_rows = [r for r, _ in category_hits + kpi_hits]
-            seed_cols = [c for _, c in category_hits + kpi_hits]
-        start_row, end_row, start_col, end_col = _expand_block(
+        seed_rows = [r for r, _ in category_hits + kpi_hits]
+        seed_cols = [c for _, c in category_hits + kpi_hits]
+        start_row, end_row, start_col, end_col = _expand_main_block(
             ws,
             seed_rows,
             seed_cols,
@@ -396,9 +603,8 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
             max_row=max_row,
             min_col=min_col,
             max_col=max_col,
-            pad_rows=1,
-            pad_cols=1,
-            stop_rows=legend_anchor_rows,
+            legend_anchors=legend_anchors,
+            required_end_row=required_end_row,
         )
     else:
         logger.warning(
@@ -406,8 +612,6 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
             match,
         )
         start_row, end_row, start_col, end_col = min_row, max_row, min_col, max_col
-        if legend_anchor_rows:
-            end_row = min(end_row, min(legend_anchor_rows) - 1)
 
     main = RangeBlock(
         label="north_scorecard",
@@ -419,8 +623,8 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
 
     legends: list[RangeBlock] = []
     seen: set[tuple[int, int, int, int]] = set()
-    for row, col in sorted(legend_anchors):
-        block = _contiguous_table_from(
+    for row, col in sorted(legend_anchors, key=lambda rc: (rc[0], rc[1])):
+        block = _expand_legend_table(
             ws,
             row,
             col,
@@ -428,12 +632,19 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
             max_row=max_row,
             min_col=min_col,
             max_col=max_col,
-            exclude=(main.start_row, main.end_row, main.start_col, main.end_col),
+            exclude=(main.start_row, main.end_row, main.start_col, main.end_col)
+            if row > main.end_row or col > main.end_col
+            else None,
+            other_legend_anchors=legend_anchors,
         )
         if block is None:
             continue
+        if block.row_count < 2 and block.col_count < 2:
+            continue
         key = (block.start_row, block.end_row, block.start_col, block.end_col)
         if key in seen:
+            continue
+        if any(abs(block.start_row - s[0]) <= 1 and abs(block.start_col - s[2]) <= 1 for s in seen):
             continue
         seen.add(key)
         legends.append(block)
@@ -457,68 +668,19 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
 
     wb.close()
     logger.info(
-        "North summary layout on %s: main=%s legends=%s labels=%s",
+        "North summary layout on %s: main=%s legends=%s labels=%s missing_bottom=%s",
         match,
         main.range_address,
         [b.range_address for b in legends],
         sorted(labels.keys()),
+        missing_bottom,
+    )
+    print(
+        f">>> North layout {match}: main={main.range_address} "
+        f"legends={[b.range_address for b in legends]} "
+        f"bottom_kpis={[k for k in REQUIRED_BOTTOM_KPIS if k in labels]}"
     )
     return NorthSummaryLayout(main=main, legends=legends)
-
-
-def _orphan_tables_outside_main(
-    ws,
-    *,
-    min_row: int,
-    max_row: int,
-    min_col: int,
-    max_col: int,
-    main: tuple[int, int, int, int],
-    already: list[RangeBlock],
-) -> list[RangeBlock]:
-    """Find small filled regions outside the main scorecard (likely legends)."""
-    mr0, mr1, mc0, mc1 = main
-    already_keys = {(b.start_row, b.end_row, b.start_col, b.end_col) for b in already}
-    candidates: list[RangeBlock] = []
-
-    # Scan rows below the main block and columns to the left/right.
-    search_cells: list[tuple[int, int]] = []
-    for row in range(mr1 + 1, max_row + 1):
-        for col in range(min_col, max_col + 1):
-            if _cell_str(ws, row, col):
-                search_cells.append((row, col))
-                break
-    for col in list(range(min_col, mc0)) + list(range(mc1 + 1, max_col + 1)):
-        for row in range(min_row, max_row + 1):
-            if _cell_str(ws, row, col) and not (mr0 <= row <= mr1 and mc0 <= col <= mc1):
-                search_cells.append((row, col))
-                break
-
-    for row, col in search_cells:
-        block = _contiguous_table_from(
-            ws,
-            row,
-            col,
-            min_row=min_row,
-            max_row=max_row,
-            min_col=min_col,
-            max_col=max_col,
-            exclude=main,
-        )
-        if block is None:
-            continue
-        key = (block.start_row, block.end_row, block.start_col, block.end_col)
-        if key in already_keys:
-            continue
-        # Must be mostly outside main.
-        overlap_rows = max(0, min(block.end_row, mr1) - max(block.start_row, mr0) + 1)
-        if overlap_rows > (block.end_row - block.start_row + 1) * 0.5:
-            continue
-        already_keys.add(key)
-        candidates.append(block)
-
-    candidates.sort(key=lambda b: (b.start_row, b.start_col))
-    return candidates[: max(0, 2 - len(already))]
 
 
 def _capture_block(
@@ -538,7 +700,6 @@ def _capture_block(
             block.end_col,
             prefer_excel_com=prefer_com,
         )
-        # Legends are small; main sheet may be sparse in Pillow fallback — stay lenient.
         return _validate_capture(
             png,
             label=f"north {block.label} {sheet_name}!{block.range_address}",
@@ -547,7 +708,6 @@ def _capture_block(
             require_wide=False,
         )
     except Exception as exc:
-        # If blank-check rejects a sized Pillow render, still accept non-tiny images.
         msg = str(exc).casefold()
         if "mostly blank" in msg or "too small" in msg:
             try:
