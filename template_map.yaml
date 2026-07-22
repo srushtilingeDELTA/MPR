@@ -193,15 +193,15 @@ slides:
         fit: fill
         optional: true
 
+  # PPT 15 — North Scorecard Comparison from GSE MPR Visualizations.xlsx
+  # Scorecard Comparison tab → Entity/Period KPI table (May'26 / vs LM / vs LYSM).
   - index: 14
     name: north_scorecard_comparison
     keep_title: true
     elements:
-      - type: scorecard_screenshot
-        workbook: scorecards
-        sheet_match: ["REGION"]
-        sheet: "REGION SUMMARY"
-        sections: sheet
+      - type: scorecard_comparison
+        workbook: visualizations
+        sheet_match: ["scorecard comparison"]
         replace_existing_pictures: true
         fit: fill
         optional: true

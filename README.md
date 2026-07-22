@@ -73,7 +73,8 @@ python main.py
 | 11 | ISR: Regions RELIABILITY + SEVERITY table + Rel/Sev graphs from Workings `ISR`; narrative emptied |
 | 13 | ISR comments: Leading Issues / Action Plan text boxes emptied (boxes kept) |
 | 14 | North Scorecard Summary from `GSE MPR Visualizations.xlsx` → Scorecard Summaries: GSE MPR category table + KPI metrics table + 2 legends (score bands / KPI status; legends captured at 200% Excel zoom + upscaled for readability) |
-| 15–18 | North comparison / South / Stationary scorecard sheet screenshots |
+| 15 | North Scorecard Comparison from `GSE MPR Visualizations.xlsx` (or `… - TESTING`) → Scorecard Comparison: Entity/Period KPI table (May'26 / vs LM / vs LYSM) |
+| 16–18 | South / Stationary scorecard sheet screenshots |
 | 19 | Jam Rate / Clear Times charts |
 | 21 | VOS chart |
 | 23–24 | Galley scorecard sheet screenshots |

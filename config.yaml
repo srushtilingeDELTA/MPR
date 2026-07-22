@@ -50,10 +50,10 @@ sharepoint:
     - name: "New GSE MPR Workings.xlsx"
       dest: "data/New GSE MPR Workings.xlsx"
       optional: true
-    - name: "GSE MPR Visualizations.xlsx"
+    - name: "GSE MPR Visualizations - TESTING.xlsx"
       dest: "data/GSE MPR Visualizations.xlsx"
       optional: true
-      # If the exact name differs, sync will also match folder files containing this.
+      # Also matches "GSE MPR Visualizations.xlsx" / similar folder names.
       match_contains: "Visualizations"
 
 columns:

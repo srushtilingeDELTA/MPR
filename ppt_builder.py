@@ -761,6 +761,11 @@ def _apply_element(slide, data: MprData, config: dict, element: dict) -> None:
 
         if not apply_north_summary_panels(slide, data, element) and not optional:
             logger.warning("No North summary panels for element %s", element)
+    elif etype == "scorecard_comparison":
+        from scorecard_comparison import apply_scorecard_comparison
+
+        if not apply_scorecard_comparison(slide, data, element) and not optional:
+            logger.warning("No Scorecard Comparison screenshot for element %s", element)
     elif etype == "clear_narrative":
         from gir_panels import clear_leading_action_narrative
 
@@ -1260,6 +1265,21 @@ def _verify_output(prs: Presentation) -> None:
             "Slide 14 North summary expected summary + metrics + 2 legends, found %s picture(s)",
             len(north_pics),
         )
+
+    # Slide 15 North Scorecard Comparison: Entity/Period table from Visualizations.
+    north_cmp = prs.slides[14]
+    north_cmp_pics = [s for s in north_cmp.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    print(
+        f"VERIFY slide 15 North comparison pictures: {len(north_cmp_pics)} "
+        "(expect 1 table screenshot when Visualizations is present)"
+    )
+    if len(north_cmp_pics) == 0:
+        print(
+            "VERIFY slide 15 North comparison: no pictures "
+            "(Visualizations workbook optional / missing on this run)"
+        )
+    else:
+        print("VERIFY slide 15 North comparison: table screenshot present")
 
 
 def build_presentation(data: MprData, config: dict, base_dir: Path) -> Path:

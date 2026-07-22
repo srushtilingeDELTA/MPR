@@ -22,7 +22,7 @@ SUGGESTED = [
     (10, "workings PMI Regions Mot/Stat+Non-Mot table + Mot/Stat graphs"),
     (11, "workings ISR Regions Rel/Sev table + Rel/Sev graphs"),
     (13, "North summary from Visualizations!Scorecard Summaries (main + 2 legends)"),
-    (14, "North comparison"),
+    (14, "North comparison from Visualizations!Scorecard Comparison"),
     (15, "South summary"),
     (16, "South comparison"),
     (17, "Stationary summary"),
