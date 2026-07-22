@@ -99,6 +99,7 @@ MPR/
 ├── ppt_format.py
 ├── scorecard_screenshots.py
 ├── north_summary.py
+├── scorecard_comparison.py
 ├── sharepoint_live.py
 ├── sharepoint_selenium.py
 ├── workbook_store.py
