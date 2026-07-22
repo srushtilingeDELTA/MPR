@@ -1141,6 +1141,43 @@ def _png_from_pil(img) -> bytes:
     return buf.getvalue()
 
 
+def upscale_png_to_min_width(
+    png_bytes: bytes,
+    *,
+    min_width: int = 1200,
+    max_scale: float = 4.0,
+) -> bytes:
+    """LANCZOS-upscale a small capture so legend text stays sharp on the slide.
+
+    Excel CopyPicture of tiny legend tables often returns ~400–600px-wide bitmaps.
+    Placing those into even a modest legend slot looks pixelated; pre-upscaling
+    gives PowerPoint more pixels to work with.
+    """
+    if min_width <= 0:
+        return png_bytes
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        img = img.convert("RGB")
+        if img.width >= min_width:
+            return png_bytes
+        scale = min(max_scale, min_width / max(img.width, 1))
+        if scale <= 1.01:
+            return png_bytes
+        new_size = (
+            max(1, int(img.width * scale)),
+            max(1, int(img.height * scale)),
+        )
+        upscaled = img.resize(new_size, Image.Resampling.LANCZOS)
+        logger.info(
+            "Upscaled capture %sx%s -> %sx%s (min_width=%s)",
+            img.width,
+            img.height,
+            upscaled.width,
+            upscaled.height,
+            min_width,
+        )
+        return _png_from_pil(upscaled)
+
+
 def _clipboard_image():
     """Read an image from the Windows clipboard, if present."""
     from PIL import ImageGrab
@@ -1363,13 +1400,16 @@ def _open_excel_workbook(workbook_path: Path):
 
 
 
-def _prepare_sheet_for_copy(excel, ws, range_addr: str):
-    """Select range at 100% zoom — matches how template scorecard EMFs were created."""
+def _prepare_sheet_for_copy(excel, ws, range_addr: str, *, zoom: int = 100):
+    """Select range at the given zoom (100% matches template scorecard EMFs).
+
+    Use zoom > 100 for small ranges (e.g. legends) so CopyPicture returns denser pixels.
+    """
     ws.Activate()
     try:
         excel.ActiveWindow.DisplayGridlines = False
         excel.ActiveWindow.DisplayHeadings = False
-        excel.ActiveWindow.Zoom = 100
+        excel.ActiveWindow.Zoom = int(max(50, min(400, zoom)))
     except Exception:
         pass
     try:
@@ -1452,7 +1492,13 @@ def _find_com_worksheet(wb, sheet_name: str):
     raise ValueError(f"Worksheet {sheet_name!r} not found in Excel COM open")
 
 
-def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str) -> bytes:
+def _capture_via_excel_com(
+    workbook_path: Path,
+    sheet_name: str,
+    range_addr: str,
+    *,
+    zoom: int = 100,
+) -> bytes:
     """True Excel range screenshot via CopyPicture (same approach as the template EMFs)."""
     try:
         import win32com.client  # noqa: F401
@@ -1469,7 +1515,7 @@ def _capture_via_excel_com(workbook_path: Path, sheet_name: str, range_addr: str
         try:
             excel, wb = _open_excel_workbook(workbook_path)
             ws = _find_com_worksheet(wb, sheet_name)
-            rng = _prepare_sheet_for_copy(excel, ws, range_addr)
+            rng = _prepare_sheet_for_copy(excel, ws, range_addr, zoom=zoom)
             return _copy_range_picture(rng)
         except Exception as exc:
             last_exc = exc
@@ -1610,6 +1656,8 @@ def _capture_via_render(
     end_row: int,
     start_col: int,
     end_col: int,
+    *,
+    render_scale: int | None = None,
 ) -> bytes:
     """Approximate Excel look when Windows Excel COM is unavailable or blank."""
     wb_vals = load_workbook(io.BytesIO(workbook_bytes), data_only=True)
@@ -1631,9 +1679,15 @@ def _capture_via_render(
     img_w = max(sum(col_widths), 40)
     img_h = max(sum(row_heights), 40)
     # Upscale small tables so they remain readable when stretched onto the slide.
-    scale = 1
-    if img_w < 900 or img_h < 500:
+    # Tiny legend ranges need a higher multiplier than full scorecards.
+    if render_scale is not None:
+        scale = max(1, int(render_scale))
+    elif img_w < 350 or img_h < 180:
+        scale = 4
+    elif img_w < 900 or img_h < 500:
         scale = 2
+    else:
+        scale = 1
     image = Image.new("RGB", (img_w * scale, img_h * scale), (255, 255, 255))
     draw = ImageDraw.Draw(image)
     font = _font(11 * scale)
@@ -1685,25 +1739,36 @@ def capture_range_png(
     end_col: int,
     *,
     prefer_excel_com: bool = True,
+    zoom: int = 100,
+    render_scale: int | None = None,
+    min_width: int | None = None,
 ) -> bytes:
-    """Screenshot (or render) an Excel A1-style range to PNG bytes."""
+    """Screenshot (or render) an Excel A1-style range to PNG bytes.
+
+    zoom: Excel ActiveWindow zoom for COM CopyPicture (use 150–200 for small legends).
+    render_scale: Pillow fallback pixel multiplier (auto when None).
+    min_width: optional LANCZOS upscale floor so tiny captures stay readable on slide.
+    """
     range_addr = _range_address(start_row, end_row, start_col, end_col)
     if prefer_excel_com:
         try:
             with tempfile.TemporaryDirectory(prefix="mpr_scorecard_") as tmp:
                 path = Path(tmp) / "scorecards.xlsx"
                 path.write_bytes(workbook_bytes)
-                png = _capture_via_excel_com(path, sheet_name, range_addr)
+                png = _capture_via_excel_com(path, sheet_name, range_addr, zoom=zoom)
                 # Extra guard: never place a blank white bitmap on the deck.
                 png = _validate_capture(png, label=f"Excel COM {sheet_name}!{range_addr}")
+                if min_width:
+                    png = upscale_png_to_min_width(png, min_width=min_width)
                 with Image.open(io.BytesIO(png)) as img:
                     logger.info(
-                        "Captured %s!%s via Excel COM (%s bytes, %sx%s)",
+                        "Captured %s!%s via Excel COM (%s bytes, %sx%s, zoom=%s)",
                         sheet_name,
                         range_addr,
                         len(png),
                         img.width,
                         img.height,
+                        zoom,
                     )
                 return png
         except Exception as exc:
@@ -1719,18 +1784,23 @@ def capture_range_png(
                     with tempfile.TemporaryDirectory(prefix="mpr_scorecard_") as tmp:
                         path = Path(tmp) / "scorecards.xlsx"
                         path.write_bytes(workbook_bytes)
-                        png = _capture_via_excel_com(path, sheet_name, range_addr)
+                        png = _capture_via_excel_com(
+                            path, sheet_name, range_addr, zoom=zoom
+                        )
                         png = _validate_capture(
                             png, label=f"Excel COM retry {sheet_name}!{range_addr}"
                         )
+                        if min_width:
+                            png = upscale_png_to_min_width(png, min_width=min_width)
                         with Image.open(io.BytesIO(png)) as img:
                             logger.info(
-                                "Captured %s!%s via Excel COM retry (%s bytes, %sx%s)",
+                                "Captured %s!%s via Excel COM retry (%s bytes, %sx%s, zoom=%s)",
                                 sheet_name,
                                 range_addr,
                                 len(png),
                                 img.width,
                                 img.height,
+                                zoom,
                             )
                         return png
                 except Exception as retry_exc:
@@ -1745,7 +1815,17 @@ def capture_range_png(
                     exc,
                 )
 
-    png = _capture_via_render(workbook_bytes, sheet_name, start_row, end_row, start_col, end_col)
+    png = _capture_via_render(
+        workbook_bytes,
+        sheet_name,
+        start_row,
+        end_row,
+        start_col,
+        end_col,
+        render_scale=render_scale,
+    )
+    if min_width:
+        png = upscale_png_to_min_width(png, min_width=min_width)
     with Image.open(io.BytesIO(png)) as img:
         logger.info(
             "Rendered %s!%s via Pillow (%s bytes, %sx%s)",

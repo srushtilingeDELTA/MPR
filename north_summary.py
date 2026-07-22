@@ -31,6 +31,7 @@ from scorecard_screenshots import (
     capture_range_png,
     place_picture_on_slide,
     resolve_sheet_name,
+    upscale_png_to_min_width,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,17 +42,23 @@ _CONTENT_LEFT = 2_208_251
 _CONTENT_TOP = 1_009_877
 _CONTENT_WIDTH = 7_775_497
 _CONTENT_HEIGHT = 4_838_246
-_LEGEND_LEFT = 314_628
-_LEGEND_WIDTH = 1_750_000
+# Leave a small gutter before the main tables; legends need enough width to read.
+_LEGEND_LEFT = 280_000
+_LEGEND_WIDTH = 1_850_000
 _GAP = 90_000
 # Summary is shorter (GSE MPR + 6 category rows); metrics holds 12 KPI rows.
 _SUMMARY_HEIGHT = int(_CONTENT_HEIGHT * 0.36)
 _METRICS_HEIGHT = _CONTENT_HEIGHT - _SUMMARY_HEIGHT - _GAP
 
-# Compact legend slots (match template: small tables, not stretched half-slide).
-_SCORE_LEGEND_HEIGHT = 1_050_000  # Legend + 3 score rows
-_KPI_LEGEND_HEIGHT = 1_300_000  # Legend + 4 KPI rows
-_LEGEND_STACK_GAP = 220_000
+# Legend slots sized for readable text (template legends are small but sharp).
+_SCORE_LEGEND_HEIGHT = 1_250_000  # Legend + 3 score rows
+_KPI_LEGEND_HEIGHT = 1_550_000  # Legend + 4 KPI rows
+_LEGEND_STACK_GAP = 160_000
+
+# High-res legend capture: Excel zoom + min pixel width before placement.
+_LEGEND_CAPTURE_ZOOM = 200
+_LEGEND_MIN_WIDTH = 1400
+_LEGEND_RENDER_SCALE = 4
 
 NORTH_SUMMARY_BOX = (_CONTENT_LEFT, _CONTENT_TOP, _CONTENT_WIDTH, _SUMMARY_HEIGHT)
 NORTH_METRICS_BOX = (
@@ -1135,6 +1142,9 @@ def _capture_block(
     block: RangeBlock,
     *,
     prefer_com: bool,
+    zoom: int = 100,
+    render_scale: int | None = None,
+    min_width: int | None = None,
 ) -> bytes | None:
     try:
         png = capture_range_png(
@@ -1145,6 +1155,9 @@ def _capture_block(
             block.start_col,
             block.end_col,
             prefer_excel_com=prefer_com,
+            zoom=zoom,
+            render_scale=render_scale,
+            min_width=min_width,
         )
         return _validate_capture(
             png,
@@ -1166,7 +1179,10 @@ def _capture_block(
                     block.end_row,
                     block.start_col,
                     block.end_col,
+                    render_scale=render_scale or _LEGEND_RENDER_SCALE,
                 )
+                if min_width:
+                    raw = upscale_png_to_min_width(raw, min_width=min_width)
                 with Image.open(io.BytesIO(raw)) as img:
                     if img.width >= 30 and img.height >= 15:
                         return _png_from_pil(img)
@@ -1222,8 +1238,18 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
         workbook_bytes, sheet_name, layout.metrics, prefer_com=prefer_com
     )
     legend_pngs: list[bytes] = []
+    legend_zoom = int(element.get("legend_zoom", _LEGEND_CAPTURE_ZOOM) or _LEGEND_CAPTURE_ZOOM)
+    legend_min_w = int(element.get("legend_min_width", _LEGEND_MIN_WIDTH) or _LEGEND_MIN_WIDTH)
     for legend in layout.legends:
-        png = _capture_block(workbook_bytes, sheet_name, legend, prefer_com=prefer_com)
+        png = _capture_block(
+            workbook_bytes,
+            sheet_name,
+            legend,
+            prefer_com=prefer_com,
+            zoom=legend_zoom,
+            render_scale=_LEGEND_RENDER_SCALE,
+            min_width=legend_min_w,
+        )
         if png:
             legend_pngs.append(png)
 
