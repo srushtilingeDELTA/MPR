@@ -1304,7 +1304,7 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
     if metrics_png:
         _place(metrics_png, metrics_box, "metrics", layout.metrics.range_address)
 
-    # Legends: preserve Excel proportions (contain) so they stay compact like the template.
+    # Legends: larger left-column slots; contain keeps Excel proportions while filling width.
     legend_fit = str(element.get("legend_fit", "contain")).lower()
     for idx, png in enumerate(legend_pngs[:2]):
         box = legend_boxes[idx] if idx < len(legend_boxes) else NORTH_LEGEND_BOXES[min(idx, 1)]
