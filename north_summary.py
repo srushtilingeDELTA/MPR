@@ -37,27 +37,26 @@ from scorecard_screenshots import (
 logger = logging.getLogger(__name__)
 
 # Measured content band from the live North Scorecard Summary template (EMU).
-# Two tables stacked in the center; two legends stacked on the left.
-_CONTENT_LEFT = 2_208_251
+# Two tables stacked center-right; two larger legends stacked on the left.
+_CONTENT_LEFT = 2_850_000  # shifted right to leave room for bigger legends
 _CONTENT_TOP = 1_009_877
-_CONTENT_WIDTH = 7_775_497
+_CONTENT_WIDTH = 7_550_000  # keep right edge near the template margin
 _CONTENT_HEIGHT = 4_838_246
-# Leave a small gutter before the main tables; legends need enough width to read.
-_LEGEND_LEFT = 280_000
-_LEGEND_WIDTH = 1_850_000
+_LEGEND_LEFT = 220_000
+_LEGEND_WIDTH = 2_450_000  # wider so score/KPI legend text is easy to read
 _GAP = 90_000
 # Summary is shorter (GSE MPR + 6 category rows); metrics holds 12 KPI rows.
 _SUMMARY_HEIGHT = int(_CONTENT_HEIGHT * 0.36)
 _METRICS_HEIGHT = _CONTENT_HEIGHT - _SUMMARY_HEIGHT - _GAP
 
-# Legend slots sized for readable text (template legends are small but sharp).
-_SCORE_LEGEND_HEIGHT = 1_250_000  # Legend + 3 score rows
-_KPI_LEGEND_HEIGHT = 1_550_000  # Legend + 4 KPI rows
-_LEGEND_STACK_GAP = 160_000
+# Larger legend slots (template left column, scaled up for readability).
+_SCORE_LEGEND_HEIGHT = 1_550_000  # Legend + 3 score rows
+_KPI_LEGEND_HEIGHT = 1_950_000  # Legend + 4 KPI rows
+_LEGEND_STACK_GAP = 120_000
 
 # High-res legend capture: Excel zoom + min pixel width before placement.
 _LEGEND_CAPTURE_ZOOM = 200
-_LEGEND_MIN_WIDTH = 1400
+_LEGEND_MIN_WIDTH = 1600
 _LEGEND_RENDER_SCALE = 4
 
 NORTH_SUMMARY_BOX = (_CONTENT_LEFT, _CONTENT_TOP, _CONTENT_WIDTH, _SUMMARY_HEIGHT)
