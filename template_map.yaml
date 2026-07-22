@@ -180,8 +180,8 @@ slides:
       - type: clear_narrative
 
   # PPT 14 — North Scorecard Summary from GSE MPR Visualizations.xlsx
-  # Scorecard Summaries tab: main scorecard (GSE MPR / SAFETY / CX / OPS /
-  # FINANCE / PEOPLE / TOTAL + KPI rows) + two legend tables.
+  # Scorecard Summaries tab → 4 screenshots matching the template layout:
+  #   left: score legend + KPI legend; center: GSE MPR summary + KPI metrics.
   - index: 13
     name: north_scorecard_summary
     keep_title: true
