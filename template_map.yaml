@@ -180,8 +180,8 @@ slides:
       - type: clear_narrative
 
   # PPT 14 — North Scorecard Summary from GSE MPR Visualizations.xlsx
-  # Scorecard Summaries tab → 4 screenshots matching the template layout:
-  #   left: score legend + KPI legend; center: GSE MPR summary + KPI metrics.
+  # Scorecard Summaries tab → 4 screenshots:
+  #   summary + score legend under it; metrics + KPI legend under it (tables shifted right).
   - index: 13
     name: north_scorecard_summary
     keep_title: true
@@ -191,6 +191,7 @@ slides:
         sheet_match: ["scorecard summar"]
         replace_existing_pictures: true
         fit: fill
+        legend_fit: contain
         optional: true
 
   # PPT 15 — North Scorecard Comparison from GSE MPR Visualizations.xlsx

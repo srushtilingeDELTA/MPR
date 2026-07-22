@@ -36,52 +36,67 @@ from scorecard_screenshots import (
 
 logger = logging.getLogger(__name__)
 
-# Measured content band from the live North Scorecard Summary template (EMU).
-# Two tables stacked center-right; two larger legends stacked on the left.
-_CONTENT_LEFT = 2_850_000  # shifted right to leave room for bigger legends
-_CONTENT_TOP = 1_009_877
-_CONTENT_WIDTH = 7_550_000  # keep right edge near the template margin
-_CONTENT_HEIGHT = 4_838_246
-_LEGEND_LEFT = 220_000
-_LEGEND_WIDTH = 2_450_000  # wider so score/KPI legend text is easy to read
-_GAP = 90_000
-# Summary is shorter (GSE MPR + 6 category rows); metrics holds 12 KPI rows.
-_SUMMARY_HEIGHT = int(_CONTENT_HEIGHT * 0.36)
-_METRICS_HEIGHT = _CONTENT_HEIGHT - _SUMMARY_HEIGHT - _GAP
+# Slide 14 layout (EMU) matching the desired North Scorecard Summary look:
+#   [======== summary table (shifted right / centered) ========]
+#   [==== large score legend ====]   ← under summary, flush left with table
+#   [======== metrics table ========]
+#   [==== large KPI legend ====]     ← under metrics, flush left with table
+#
+# Widescreen slide is 12_192_000 × 6_858_000. Keep a modest left margin and
+# stretch tables toward the right so dead space on the right is reduced.
+_BAND_LEFT = 1_650_000
+_BAND_TOP = 980_000
+_BAND_WIDTH = 9_700_000
+_BAND_BOTTOM_MARGIN = 380_000
+_BAND_HEIGHT = 6_858_000 - _BAND_TOP - _BAND_BOTTOM_MARGIN  # ~5.5M
 
-# Larger legend slots (template left column, scaled up for readability).
-_SCORE_LEGEND_HEIGHT = 1_550_000  # Legend + 3 score rows
-_KPI_LEGEND_HEIGHT = 1_950_000  # Legend + 4 KPI rows
-_LEGEND_STACK_GAP = 120_000
+_GAP = 70_000
+_LEGEND_GAP = 50_000  # gap between a table and its legend underneath
+
+# Vertical shares inside the content band (summary shorter; metrics taller).
+_SUMMARY_FRAC = 0.27
+_SCORE_LEGEND_FRAC = 0.16
+_METRICS_FRAC = 0.33
+_KPI_LEGEND_FRAC = 0.18
+# Remaining ~6% absorbed into gaps above.
+
+_SUMMARY_HEIGHT = int(_BAND_HEIGHT * _SUMMARY_FRAC)
+_SCORE_LEGEND_HEIGHT = int(_BAND_HEIGHT * _SCORE_LEGEND_FRAC)
+_METRICS_HEIGHT = int(_BAND_HEIGHT * _METRICS_FRAC)
+_KPI_LEGEND_HEIGHT = int(_BAND_HEIGHT * _KPI_LEGEND_FRAC)
+
+# Legends are large (~55% of table width), under the left edge of each table.
+_LEGEND_WIDTH = int(_BAND_WIDTH * 0.55)
+
+_SUMMARY_TOP = _BAND_TOP
+_SCORE_LEGEND_TOP = _SUMMARY_TOP + _SUMMARY_HEIGHT + _LEGEND_GAP
+_METRICS_TOP = _SCORE_LEGEND_TOP + _SCORE_LEGEND_HEIGHT + _GAP
+_KPI_LEGEND_TOP = _METRICS_TOP + _METRICS_HEIGHT + _LEGEND_GAP
 
 # High-res legend capture: Excel zoom + min pixel width before placement.
 _LEGEND_CAPTURE_ZOOM = 200
-_LEGEND_MIN_WIDTH = 1600
+_LEGEND_MIN_WIDTH = 1800
 _LEGEND_RENDER_SCALE = 4
 
-NORTH_SUMMARY_BOX = (_CONTENT_LEFT, _CONTENT_TOP, _CONTENT_WIDTH, _SUMMARY_HEIGHT)
-NORTH_METRICS_BOX = (
-    _CONTENT_LEFT,
-    _CONTENT_TOP + _SUMMARY_HEIGHT + _GAP,
-    _CONTENT_WIDTH,
-    _METRICS_HEIGHT,
-)
+NORTH_SUMMARY_BOX = (_BAND_LEFT, _SUMMARY_TOP, _BAND_WIDTH, _SUMMARY_HEIGHT)
+NORTH_METRICS_BOX = (_BAND_LEFT, _METRICS_TOP, _BAND_WIDTH, _METRICS_HEIGHT)
 NORTH_LEGEND_BOXES = (
-    (_LEGEND_LEFT, _CONTENT_TOP, _LEGEND_WIDTH, _SCORE_LEGEND_HEIGHT),
-    (
-        _LEGEND_LEFT,
-        _CONTENT_TOP + _SCORE_LEGEND_HEIGHT + _LEGEND_STACK_GAP,
-        _LEGEND_WIDTH,
-        _KPI_LEGEND_HEIGHT,
-    ),
+    (_BAND_LEFT, _SCORE_LEGEND_TOP, _LEGEND_WIDTH, _SCORE_LEGEND_HEIGHT),
+    (_BAND_LEFT, _KPI_LEGEND_TOP, _LEGEND_WIDTH, _KPI_LEGEND_HEIGHT),
 )
 
-# Keep old name for any callers expecting a single main box.
+# Keep old names for callers expecting prior constants.
+_CONTENT_LEFT = _BAND_LEFT
+_CONTENT_TOP = _BAND_TOP
+_CONTENT_WIDTH = _BAND_WIDTH
+_CONTENT_HEIGHT = _BAND_HEIGHT
+_LEGEND_LEFT = _BAND_LEFT
+
 NORTH_MAIN_BOX = (
-    _CONTENT_LEFT,
-    _CONTENT_TOP,
-    _CONTENT_WIDTH,
-    _CONTENT_HEIGHT,
+    _BAND_LEFT,
+    _BAND_TOP,
+    _BAND_WIDTH,
+    _BAND_HEIGHT,
 )
 
 CATEGORY_ROWS = (
@@ -786,8 +801,11 @@ def _resolve_placement_boxes(
 ]:
     """Return summary_box, metrics_box, legend_boxes.
 
-    Legends always use compact left-margin slots (template legend pictures are often
-    oversized half-slide boxes that stretch/overlap when filled).
+    Default layout matches the desired deck look: both tables shifted right in a
+    wide content band, with a large legend directly under each table (flush left).
+
+    Template picture slots are ignored by default — older template EMFs often
+    sit on the left and cause legends to overlap the scorecard tables.
     """
     if element.get("summary_box") and element.get("metrics_box"):
         summary = tuple(int(x) for x in element["summary_box"])
@@ -799,23 +817,49 @@ def _resolve_placement_boxes(
     if element.get("legend_boxes"):
         legend_boxes = [tuple(int(x) for x in box) for box in element["legend_boxes"]]
     else:
-        legend_boxes = list(NORTH_LEGEND_BOXES)
+        # Keep legends flush with the left edge of whichever table boxes we use.
+        legend_boxes = [
+            (summary[0], NORTH_LEGEND_BOXES[0][1], _LEGEND_WIDTH, NORTH_LEGEND_BOXES[0][3]),
+            (metrics[0], NORTH_LEGEND_BOXES[1][1], _LEGEND_WIDTH, NORTH_LEGEND_BOXES[1][3]),
+        ]
+        # If caller overrode table tops/heights, park legends just under each table.
+        if element.get("summary_box") or element.get("metrics_box"):
+            legend_boxes = [
+                (
+                    summary[0],
+                    summary[1] + summary[3] + _LEGEND_GAP,
+                    _LEGEND_WIDTH,
+                    _SCORE_LEGEND_HEIGHT,
+                ),
+                (
+                    metrics[0],
+                    metrics[1] + metrics[3] + _LEGEND_GAP,
+                    _LEGEND_WIDTH,
+                    _KPI_LEGEND_HEIGHT,
+                ),
+            ]
 
-    slots = _picture_boxes(slide)
-    if len(slots) >= 4:
-        large = sorted(slots[:2], key=lambda b: (b[1], b[0]))
-        summary, metrics = large[0], large[1]
-        # Keep compact legend boxes unless caller overrode them.
-        if not element.get("legend_boxes"):
-            legend_boxes = list(NORTH_LEGEND_BOXES)
-    elif len(slots) >= 1:
-        # Largest slot (or only slot) is the main content area — split for tables.
-        large = max(slots, key=lambda b: b[2] * b[3])
-        left, top, width, height = large
-        sum_h = int(height * 0.36)
-        met_h = height - sum_h - _GAP
-        summary = (left, top, width, sum_h)
-        metrics = (left, top + sum_h + _GAP, width, max(met_h, 1))
+    # Optional escape hatch only — do not reuse left-biased template EMF slots.
+    if element.get("use_template_slots"):
+        slots = _picture_boxes(slide)
+        if len(slots) >= 2:
+            large = sorted(slots[:2], key=lambda b: (b[1], b[0]))
+            summary, metrics = large[0], large[1]
+            if not element.get("legend_boxes"):
+                legend_boxes = [
+                    (
+                        summary[0],
+                        summary[1] + summary[3] + _LEGEND_GAP,
+                        min(_LEGEND_WIDTH, summary[2]),
+                        _SCORE_LEGEND_HEIGHT,
+                    ),
+                    (
+                        metrics[0],
+                        metrics[1] + metrics[3] + _LEGEND_GAP,
+                        min(_LEGEND_WIDTH, metrics[2]),
+                        _KPI_LEGEND_HEIGHT,
+                    ),
+                ]
 
     return summary, metrics, legend_boxes[:2]
 
@@ -1304,7 +1348,7 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
     if metrics_png:
         _place(metrics_png, metrics_box, "metrics", layout.metrics.range_address)
 
-    # Legends: larger left-column slots; contain keeps Excel proportions while filling width.
+    # Legends sit under each table (flush left); contain into large slots keeps text sharp.
     legend_fit = str(element.get("legend_fit", "contain")).lower()
     for idx, png in enumerate(legend_pngs[:2]):
         box = legend_boxes[idx] if idx < len(legend_boxes) else NORTH_LEGEND_BOXES[min(idx, 1)]
