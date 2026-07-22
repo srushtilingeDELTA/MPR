@@ -48,6 +48,11 @@ _GAP = 90_000
 _SUMMARY_HEIGHT = int(_CONTENT_HEIGHT * 0.36)
 _METRICS_HEIGHT = _CONTENT_HEIGHT - _SUMMARY_HEIGHT - _GAP
 
+# Compact legend slots (match template: small tables, not stretched half-slide).
+_SCORE_LEGEND_HEIGHT = 1_050_000  # Legend + 3 score rows
+_KPI_LEGEND_HEIGHT = 1_300_000  # Legend + 4 KPI rows
+_LEGEND_STACK_GAP = 220_000
+
 NORTH_SUMMARY_BOX = (_CONTENT_LEFT, _CONTENT_TOP, _CONTENT_WIDTH, _SUMMARY_HEIGHT)
 NORTH_METRICS_BOX = (
     _CONTENT_LEFT,
@@ -56,12 +61,12 @@ NORTH_METRICS_BOX = (
     _METRICS_HEIGHT,
 )
 NORTH_LEGEND_BOXES = (
-    (_LEGEND_LEFT, _CONTENT_TOP, _LEGEND_WIDTH, _SUMMARY_HEIGHT),
+    (_LEGEND_LEFT, _CONTENT_TOP, _LEGEND_WIDTH, _SCORE_LEGEND_HEIGHT),
     (
         _LEGEND_LEFT,
-        _CONTENT_TOP + _SUMMARY_HEIGHT + _GAP,
+        _CONTENT_TOP + _SCORE_LEGEND_HEIGHT + _LEGEND_STACK_GAP,
         _LEGEND_WIDTH,
-        _METRICS_HEIGHT,
+        _KPI_LEGEND_HEIGHT,
     ),
 )
 
@@ -373,6 +378,49 @@ def _find_legend_row_cells(
     return hits
 
 
+def _is_legend_junk_neighbor(text: str) -> bool:
+    """True for nearby Excel labels that must not be pulled into a legend crop."""
+    n = _norm(text)
+    if not n:
+        return False
+    tokens = set(re.findall(r"[a-z0-9%]+", n))
+    junk = {
+        "ot",
+        "hours",
+        "hc",
+        "fte",
+        "headcount",
+        "budget",
+        "north",
+        "bos",
+        "dtw",
+        "msp",
+        "slc",
+        "ny",
+        "jfk",
+        "lga",
+        "safety",
+        "operations",
+        "finance",
+        "people",
+        "total",
+    }
+    if tokens & junk:
+        return True
+    # Longer labels that are clearly not legend body text.
+    for bad in (
+        "overtime",
+        "total hours",
+        "lead input",
+        "global injury",
+        "customer experience",
+        "gse mpr",
+    ):
+        if bad in n:
+            return True
+    return False
+
+
 def _legend_block_from_rows(
     ws,
     *,
@@ -384,24 +432,23 @@ def _legend_block_from_rows(
     max_col: int,
     exclude: tuple[int, int, int, int] | None = None,
 ) -> RangeBlock | None:
-    """Build a legend capture from known body labels + Legend header + color swatch col.
+    """Build a tight legend capture: Legend header + swatch + known body rows only.
 
-    Target content:
-      Legend | (header)
-      [swatch] Score Above 4 / Between 3 and 4 / Below 3
-      — or —
-      Legend | (header)
-      [swatch] KPI Better/Worse / Not Applicable / Goal Pending for KPI
+    Does not expand into neighboring Excel junk (OT / Hours / HC / scorecard cols).
     """
     if not body_hits:
         return None
 
-    rows = [r for r, _c, _t in body_hits]
-    cols = [c for _r, c, _t in body_hits]
+    # Prefer the densest same-column cluster of body labels.
+    by_col: dict[int, list[tuple[int, int, str]]] = {}
+    for hit in body_hits:
+        by_col.setdefault(hit[1], []).append(hit)
+    text_col, cluster = max(by_col.items(), key=lambda kv: len(kv[1]))
+    rows = [r for r, _c, _t in cluster]
     start_row = min(rows)
     end_row = max(rows)
-    start_col = min(cols)
-    end_col = max(cols)
+    start_col = text_col
+    end_col = text_col
 
     def in_exclude(r: int, c: int) -> bool:
         if exclude is None:
@@ -409,11 +456,14 @@ def _legend_block_from_rows(
         er0, er1, ec0, ec1 = exclude
         return er0 <= r <= er1 and ec0 <= c <= ec1
 
-    # Include color-swatch column to the left of the text labels.
+    # Color-swatch column immediately left of the text (fills only / Legend header).
     if start_col > min_col:
         left = start_col - 1
-        if any(
-            (_cell_interesting(ws, r, left) or _is_legend_header(_cell_str(ws, r, left)))
+        left_texts = [_cell_str(ws, r, left) for r in range(start_row, end_row + 1)]
+        if any(_is_legend_junk_neighbor(t) for t in left_texts):
+            pass
+        elif any(
+            (_cell_has_fill(ws, r, left) or not _cell_str(ws, r, left))
             and not in_exclude(r, left)
             for r in range(start_row, end_row + 1)
         ) or any(
@@ -421,61 +471,60 @@ def _legend_block_from_rows(
             for r in range(max(min_row, start_row - 2), start_row + 1)
         ):
             start_col = left
-        else:
-            # Real legends almost always have a swatch column; include it when the
-            # left column is empty of other scorecard labels.
-            left_blob = " ".join(_norm(_cell_str(ws, r, left)) for r in range(start_row, end_row + 1))
-            if not left_blob or _is_legend_header(left_blob):
-                start_col = left
 
-    # Pull in the "Legend" header row above the body (required).
+    # "Legend" header row directly above the body (do not skip into unrelated blocks).
     header_row = None
-    for r in range(start_row - 1, max(min_row, start_row - 5) - 1, -1):
-        for c in range(max(min_col, start_col - 1), min(end_col + 2, max_col + 1)):
+    for r in range(start_row - 1, max(min_row, start_row - 3) - 1, -1):
+        header_hit = False
+        for c in range(start_col, end_col + 1):
             if in_exclude(r, c):
                 continue
-            if _is_legend_header(_cell_str(ws, r, c)):
+            text = _cell_str(ws, r, c)
+            if _is_legend_header(text):
                 header_row = r
-                start_col = min(start_col, c)
-                end_col = max(end_col, c)
+                header_hit = True
                 break
-        if header_row is not None:
+            if text and _is_legend_junk_neighbor(text):
+                header_hit = True  # stop upward scan
+                break
+        if header_hit:
             break
-        # Stop if we hit unrelated content above.
-        if any(
-            _cell_str(ws, r, c) and not _is_legend_header(_cell_str(ws, r, c))
-            for c in range(start_col, end_col + 1)
-        ):
-            break
+        # Blank / fill-only row — keep looking one more step.
     if header_row is not None:
         start_row = header_row
-    else:
-        # Header on same row as first body label (rare) or missing — keep body.
-        logger.warning("North %s legend: 'Legend' header not found above body rows %s", kind, rows)
 
-    # Grow one column right for wrapped/merged label text.
-    if end_col < max_col:
-        right = end_col + 1
-        if any(
-            _cell_interesting(ws, r, right) and not in_exclude(r, right)
-            for r in range(start_row, end_row + 1)
-        ):
-            end_col = right
-
+    # Include merged cells that only cover the legend footprint (not neighbors).
     try:
         for merged in ws.merged_cells.ranges:
-            if (
-                merged.max_row >= start_row
-                and merged.min_row <= end_row
-                and merged.max_col >= start_col
-                and merged.min_col <= end_col
-            ):
-                start_row = min(start_row, int(merged.min_row))
-                end_row = max(end_row, int(merged.max_row))
-                start_col = min(start_col, int(merged.min_col))
-                end_col = max(end_col, int(merged.max_col))
+            if merged.min_row < start_row or merged.max_row > end_row:
+                continue
+            if merged.min_col < start_col - 0 or merged.max_col > end_col + 1:
+                # Allow header merge one col past text.
+                if not (
+                    merged.min_row == start_row
+                    and merged.min_col >= start_col
+                    and merged.max_col <= end_col + 1
+                ):
+                    continue
+            # Reject merges that bring in junk text.
+            junk = False
+            for r in range(int(merged.min_row), int(merged.max_row) + 1):
+                for c in range(int(merged.min_col), int(merged.max_col) + 1):
+                    if _is_legend_junk_neighbor(_cell_str(ws, r, c)):
+                        junk = True
+                        break
+                if junk:
+                    break
+            if junk:
+                continue
+            start_col = min(start_col, int(merged.min_col))
+            end_col = max(end_col, int(merged.max_col))
     except Exception:
         pass
+
+    # Hard cap: never more columns than swatch + label (+ optional wrap).
+    if end_col - start_col > 2:
+        end_col = start_col + 2
 
     return RangeBlock(
         label=f"legend_{kind}",
@@ -664,7 +713,10 @@ def _expand_legend_table(
         grew = False
         if end_row < max_row and (end_row - start_row + 1) < LEGEND_MAX_ROWS:
             r = end_row + 1
-            if not any(hits_other(r, c) for c in range(start_col, end_col + 1)) and any(
+            row_texts = [_cell_str(ws, r, c) for c in range(start_col, end_col + 1)]
+            if any(_is_legend_junk_neighbor(t) for t in row_texts):
+                pass
+            elif not any(hits_other(r, c) for c in range(start_col, end_col + 1)) and any(
                 _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for c in range(start_col, end_col + 1)
             ):
@@ -672,7 +724,10 @@ def _expand_legend_table(
                 grew = True
         if end_col < max_col and (end_col - start_col + 1) < LEGEND_MAX_COLS:
             c = end_col + 1
-            if not any(hits_other(r, c) for r in range(start_row, end_row + 1)) and any(
+            col_texts = [_cell_str(ws, r, c) for r in range(start_row, end_row + 1)]
+            if any(_is_legend_junk_neighbor(t) for t in col_texts):
+                pass
+            elif not any(hits_other(r, c) for r in range(start_row, end_row + 1)) and any(
                 _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for r in range(start_row, end_row + 1)
             ):
@@ -680,7 +735,10 @@ def _expand_legend_table(
                 grew = True
         if start_col > min_col and (end_col - start_col + 1) < LEGEND_MAX_COLS:
             c = start_col - 1
-            if not any(hits_other(r, c) for r in range(start_row, end_row + 1)) and any(
+            col_texts = [_cell_str(ws, r, c) for r in range(start_row, end_row + 1)]
+            if any(_is_legend_junk_neighbor(t) for t in col_texts):
+                pass
+            elif not any(hits_other(r, c) for r in range(start_row, end_row + 1)) and any(
                 _cell_interesting(ws, r, c) and not in_exclude(r, c)
                 for r in range(start_row, end_row + 1)
             ):
@@ -720,7 +778,11 @@ def _resolve_placement_boxes(
     tuple[int, int, int, int],
     list[tuple[int, int, int, int]],
 ]:
-    """Return summary_box, metrics_box, legend_boxes."""
+    """Return summary_box, metrics_box, legend_boxes.
+
+    Legends always use compact left-margin slots (template legend pictures are often
+    oversized half-slide boxes that stretch/overlap when filled).
+    """
     if element.get("summary_box") and element.get("metrics_box"):
         summary = tuple(int(x) for x in element["summary_box"])
         metrics = tuple(int(x) for x in element["metrics_box"])
@@ -728,38 +790,46 @@ def _resolve_placement_boxes(
         summary = NORTH_SUMMARY_BOX
         metrics = NORTH_METRICS_BOX
 
-    legend_boxes: list[tuple[int, int, int, int]] | None = None
     if element.get("legend_boxes"):
         legend_boxes = [tuple(int(x) for x in box) for box in element["legend_boxes"]]
+    else:
+        legend_boxes = list(NORTH_LEGEND_BOXES)
 
     slots = _picture_boxes(slide)
     if len(slots) >= 4:
-        # Two large (tables) + two small (legends), sorted by area then position.
         large = sorted(slots[:2], key=lambda b: (b[1], b[0]))
-        small = sorted(slots[2:4], key=lambda b: (b[1], b[0]))
         summary, metrics = large[0], large[1]
-        legend_boxes = small
-    elif len(slots) == 3:
-        # Historical template: one large content slot + two legend slots.
-        # Split the large slot vertically into summary + metrics.
-        large = slots[0]
-        small = sorted(slots[1:3], key=lambda b: (b[1], b[0]))
+        # Keep compact legend boxes unless caller overrode them.
+        if not element.get("legend_boxes"):
+            legend_boxes = list(NORTH_LEGEND_BOXES)
+    elif len(slots) >= 1:
+        # Largest slot (or only slot) is the main content area — split for tables.
+        large = max(slots, key=lambda b: b[2] * b[3])
         left, top, width, height = large
         sum_h = int(height * 0.36)
         met_h = height - sum_h - _GAP
         summary = (left, top, width, sum_h)
         metrics = (left, top + sum_h + _GAP, width, max(met_h, 1))
-        legend_boxes = small
-    elif len(slots) == 1:
-        left, top, width, height = slots[0]
-        sum_h = int(height * 0.36)
-        met_h = height - sum_h - _GAP
-        summary = (left, top, width, sum_h)
-        metrics = (left, top + sum_h + _GAP, width, max(met_h, 1))
 
-    if not legend_boxes:
-        legend_boxes = list(NORTH_LEGEND_BOXES)
     return summary, metrics, legend_boxes[:2]
+
+
+def _cluster_hits_by_column(
+    hits: list[tuple[int, int]],
+    *,
+    min_prefer: int = 3,
+) -> list[tuple[int, int]]:
+    """Keep hits from the densest column so legend-adjacent junk (OT/Hours) is ignored."""
+    if not hits:
+        return []
+    by_col: dict[int, list[tuple[int, int]]] = {}
+    for hit in hits:
+        by_col.setdefault(hit[1], []).append(hit)
+    best_col, cluster = max(by_col.items(), key=lambda kv: (len(kv[1]), -kv[0]))
+    if len(cluster) >= min_prefer or len(by_col) == 1:
+        return sorted(cluster)
+    # Fall back to all hits if nothing is dense enough.
+    return sorted(hits)
 
 
 def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> NorthSummaryLayout:
@@ -773,8 +843,14 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
     min_row, max_row, min_col, max_col = _used_bounds(ws)
 
     labels = _find_row_labels(ws, min_row, max_row, min_col, max_col)
-    category_hits = [labels[t] for t in CATEGORY_ROWS if t in labels]
-    kpi_hits = [labels[k] for k in KPI_KEYS if k in labels]
+    category_hits = _cluster_hits_by_column(
+        [labels[t] for t in CATEGORY_ROWS if t in labels],
+        min_prefer=3,
+    )
+    kpi_hits = _cluster_hits_by_column(
+        [labels[k] for k in KPI_KEYS if k in labels],
+        min_prefer=4,
+    )
 
     legend_anchors = [
         (r, c)
@@ -801,11 +877,12 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
             seed_cols.append(labels["gse mpr"][1])
             cat_rows.append(labels["gse mpr"][0])
         # Stop before first KPI row / second entity header so summary stays separate.
-        stop = {r for r, _ in kpi_hits} if kpi_hits else set()
+        # Only use clustered KPI rows (ignore OT/Hours junk matched as KPI aliases).
+        stop: set[int] = set()
         if kpi_hits:
             first_kpi = min(r for r, _ in kpi_hits)
-            # Also stop on a repeated entity-header row sitting between TOTAL and KPIs.
-            for row in range(max(cat_rows) + 1, first_kpi):
+            stop.add(first_kpi)
+            for row in range(max(r for r, _ in category_hits) + 1, first_kpi):
                 ents = [
                     c
                     for c in range(min_col, max_col + 1)
@@ -814,7 +891,6 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
                 if len(ents) >= 2:
                     stop.add(row)
                     break
-            stop.add(first_kpi)
         summary = _expand_table(
             ws,
             cat_rows,
@@ -827,7 +903,7 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
             entity_end_col=entity_end,
             stop_before_rows=stop,
         )
-        # Hard cap: never past the row before the first KPI label.
+        # Hard cap: never past the row before the first clustered KPI label.
         if kpi_hits:
             summary.end_row = min(summary.end_row, min(r for r, _ in kpi_hits) - 1)
             if stop:
@@ -881,9 +957,11 @@ def detect_north_summary_layout(workbook_bytes: bytes, sheet_name: str) -> North
             stop_before_rows={r for r, _ in legend_anchors if r > max(kpi_rows)},
         )
         metrics.label = "metrics"
-        # Ensure all required bottom KPIs are inside the metrics block.
+        # Align metrics under the summary table so left legend / OT-Hours cols stay out.
+        metrics.start_col = summary.start_col
+        metrics.end_col = max(metrics.end_col, summary.end_col)
         for key in ("qc compliance", "budget $000s", "overtime", "total hours", "lead input"):
-            if key in labels:
+            if key in labels and any(labels[key][1] == c for _, c in kpi_hits):
                 metrics.end_row = max(metrics.end_row, labels[key][0])
     else:
         metrics = RangeBlock(
@@ -1164,7 +1242,15 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
     out_dir.mkdir(parents=True, exist_ok=True)
     placed = 0
 
-    def _place(png: bytes, box: tuple[int, int, int, int], name: str, addr: str) -> None:
+    def _place(
+        png: bytes,
+        box: tuple[int, int, int, int],
+        name: str,
+        addr: str,
+        *,
+        fit_mode: str | None = None,
+        align: str = "center",
+    ) -> None:
         nonlocal placed
         place_picture_on_slide(
             slide,
@@ -1173,7 +1259,8 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
             top=box[1],
             max_width=box[2],
             max_height=box[3],
-            fit=fit,
+            fit=fit_mode or fit,
+            align=align,
         )
         placed += 1
         try:
@@ -1182,7 +1269,7 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
                 img.save(debug)
                 print(
                     f">>> North {name} from {sheet_name}!{addr} "
-                    f"({img.width}x{img.height}) box={box} -> {debug.name}"
+                    f"({img.width}x{img.height}) box={box} fit={fit_mode or fit} -> {debug.name}"
                 )
         except Exception:
             print(f">>> North {name} placed from {sheet_name}!{addr}")
@@ -1192,10 +1279,19 @@ def apply_north_summary_panels(slide, data, element: dict) -> bool:
     if metrics_png:
         _place(metrics_png, metrics_box, "metrics", layout.metrics.range_address)
 
+    # Legends: preserve Excel proportions (contain) so they stay compact like the template.
+    legend_fit = str(element.get("legend_fit", "contain")).lower()
     for idx, png in enumerate(legend_pngs[:2]):
         box = legend_boxes[idx] if idx < len(legend_boxes) else NORTH_LEGEND_BOXES[min(idx, 1)]
         legend = layout.legends[idx]
-        _place(png, box, f"legend{idx + 1}", legend.range_address)
+        _place(
+            png,
+            box,
+            f"legend{idx + 1}",
+            legend.range_address,
+            fit_mode=legend_fit,
+            align="top-left",
+        )
 
     if len(legend_pngs) < 2:
         print(
