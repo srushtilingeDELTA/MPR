@@ -106,6 +106,7 @@ MPR/
 ├── report_utils.py
 ├── config.yaml
 ├── template_map.yaml
+├── HANDOFF.md
 ├── data/
 ├── templates/
 ├── output/
@@ -126,6 +127,8 @@ MPR/
 ## GitHub
 
 Repo: https://github.com/srushtilingeDELTA/MPR
+
+For a full project handoff (architecture, slide status, North slide lessons, next work for Kiro IDE), see [`HANDOFF.md`](HANDOFF.md).
 
 ```powershell
 git pull
